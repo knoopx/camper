@@ -1,0 +1,358 @@
+use crate::bandcamp::{AlbumDetails, BandcampClient};
+use crate::discover::{DiscoverMsg, DiscoverOutput, DiscoverPage};
+use crate::library::{LibraryMsg, LibraryOutput, LibraryPage};
+use crate::login::{LoginOutput, LoginPage};
+use crate::player::{Player, PlayerMsg, PlayerOutput, Track};
+use crate::search::{SearchMsg, SearchOutput, SearchPage};
+use crate::storage;
+use gtk4::prelude::*;
+use libadwaita as adw;
+use relm4::prelude::*;
+
+pub struct App {
+    mode: AppMode,
+    login: Controller<LoginPage>,
+    discover: Option<Controller<DiscoverPage>>,
+    search: Option<Controller<SearchPage>>,
+    library: Option<Controller<LibraryPage>>,
+    player: Option<Controller<Player>>,
+    client: Option<BandcampClient>,
+    current_album: Option<AlbumDetails>,
+    toast_overlay: adw::ToastOverlay,
+    toolbars: Option<Toolbars>,
+}
+
+struct Toolbars {
+    search: gtk4::Box,
+    discover: gtk4::Box,
+    library: gtk4::Box,
+}
+
+#[derive(Debug, Default, PartialEq)]
+enum AppMode {
+    #[default]
+    Login,
+    Main,
+}
+
+#[derive(Debug)]
+pub enum AppMsg {
+    LoginSuccess(String),
+    ClientReady(BandcampClient),
+    ClientError(String),
+    DiscoverAction(DiscoverOutput),
+    SearchAction(SearchOutput),
+    LibraryAction(LibraryOutput),
+    PlayerAction(PlayerOutput),
+    PlayAlbum(String),
+    AlbumLoaded(Result<AlbumDetails, String>),
+    AddToWishlist,
+    TabChanged,
+    Logout,
+    ShowToast(String),
+}
+
+#[relm4::component(pub)]
+impl Component for App {
+    type Init = ();
+    type Input = AppMsg;
+    type Output = ();
+    type CommandOutput = AppCmd;
+
+    view! {
+        adw::ApplicationWindow {
+            set_title: Some("Camper"),
+            set_default_width: 1100,
+            set_default_height: 700,
+
+            #[local_ref]
+            toast_overlay -> adw::ToastOverlay {
+                #[name = "main_stack"]
+                gtk4::Stack {
+                    set_transition_type: gtk4::StackTransitionType::Crossfade,
+
+                    add_named[Some("login")] = model.login.widget() {},
+
+                    add_named[Some("main")] = &gtk4::Box {
+                        set_orientation: gtk4::Orientation::Vertical,
+
+                        #[name = "header_bar"]
+                        adw::HeaderBar {
+                            #[wrap(Some)]
+                            #[name = "view_switcher"]
+                            set_title_widget = &adw::ViewSwitcher {
+                                set_policy: adw::ViewSwitcherPolicy::Wide,
+                            },
+
+                            pack_end = &gtk4::Button {
+                                set_icon_name: "system-log-out-symbolic",
+                                set_tooltip_text: Some("Logout"),
+                                connect_clicked => AppMsg::Logout,
+                            },
+                        },
+
+                        #[name = "content_stack"]
+                        adw::ViewStack {
+                            set_vexpand: true,
+                        },
+
+                        gtk4::Separator {},
+
+                        #[name = "player_box"]
+                        gtk4::Box {},
+                    },
+                },
+            },
+        }
+    }
+
+    fn init(_: Self::Init, root: Self::Root, sender: ComponentSender<Self>) -> ComponentParts<Self> {
+        let login = LoginPage::builder()
+            .launch(())
+            .forward(sender.input_sender(), |msg| match msg {
+                LoginOutput::Success(cookies) => AppMsg::LoginSuccess(cookies),
+            });
+
+        let toast_overlay = adw::ToastOverlay::new();
+
+        let model = Self {
+            mode: AppMode::Login,
+            login,
+            discover: None,
+            search: None,
+            library: None,
+            player: None,
+            client: None,
+            current_album: None,
+            toast_overlay: toast_overlay.clone(),
+            toolbars: None,
+        };
+
+        let toast_overlay = &model.toast_overlay;
+        let widgets = view_output!();
+
+        if let Some(cookies) = storage::load_cookies() {
+            sender.input(AppMsg::LoginSuccess(cookies));
+        }
+
+        ComponentParts { model, widgets }
+    }
+
+    fn update_with_view(
+        &mut self,
+        widgets: &mut Self::Widgets,
+        msg: Self::Input,
+        sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
+        match msg {
+            AppMsg::LoginSuccess(cookies) => {
+                if self.client.is_some() || self.mode == AppMode::Main {
+                    return;
+                }
+                let cookies_clone = cookies.clone();
+                sender.oneshot_command(async move {
+                    match BandcampClient::new(cookies).await {
+                        Ok(client) => {
+                            let _ = storage::save_cookies(&cookies_clone);
+                            AppCmd::ClientReady(client)
+                        }
+                        Err(e) => {
+                            storage::clear_cookies();
+                            AppCmd::ClientError(e.to_string())
+                        }
+                    }
+                });
+            }
+            AppMsg::ClientReady(client) => {
+                let username = client.fan().username.clone();
+                sender.input(AppMsg::ShowToast(format!("Welcome, {}!", username)));
+
+                let discover = DiscoverPage::builder()
+                    .launch(())
+                    .forward(sender.input_sender(), AppMsg::DiscoverAction);
+                discover.emit(DiscoverMsg::SetClient(client.clone()));
+
+                let search = SearchPage::builder()
+                    .launch(())
+                    .forward(sender.input_sender(), AppMsg::SearchAction);
+                search.emit(SearchMsg::SetClient(client.clone()));
+
+                let library = LibraryPage::builder()
+                    .launch(())
+                    .forward(sender.input_sender(), AppMsg::LibraryAction);
+                library.emit(LibraryMsg::SetClient(client.clone()));
+
+                let player = Player::builder()
+                    .launch(())
+                    .forward(sender.input_sender(), AppMsg::PlayerAction);
+
+                // Build toolbars and pack into header bar
+                let search_toolbar = crate::search::build_toolbar(search.sender());
+                let discover_toolbar = crate::discover::build_toolbar(discover.sender());
+                let library_toolbar = crate::library::build_toolbar(library.sender());
+
+                widgets.header_bar.pack_start(&search_toolbar);
+                widgets.header_bar.pack_start(&discover_toolbar);
+                widgets.header_bar.pack_start(&library_toolbar);
+
+                self.toolbars = Some(Toolbars {
+                    search: search_toolbar,
+                    discover: discover_toolbar,
+                    library: library_toolbar,
+                });
+
+                widgets.content_stack.add_titled_with_icon(
+                    search.widget(), Some("search"), "Search", "system-search-symbolic",
+                );
+                widgets.content_stack.add_titled_with_icon(
+                    discover.widget(), Some("discover"), "Discover", "web-browser-symbolic",
+                );
+                widgets.content_stack.add_titled_with_icon(
+                    library.widget(), Some("library"), "Library", "folder-music-symbolic",
+                );
+
+                widgets.player_box.append(player.widget());
+                widgets.view_switcher.set_stack(Some(&widgets.content_stack));
+
+                // Listen for tab changes
+                let s = sender.clone();
+                widgets.content_stack.connect_visible_child_name_notify(move |_| {
+                    s.input(AppMsg::TabChanged);
+                });
+
+                self.discover = Some(discover);
+                self.search = Some(search);
+                self.library = Some(library);
+                self.player = Some(player);
+                self.client = Some(client);
+                self.mode = AppMode::Main;
+
+                // Default to library tab
+                widgets.content_stack.set_visible_child_name("library");
+                sender.input(AppMsg::TabChanged);
+            }
+            AppMsg::TabChanged => {
+                if let Some(toolbars) = &self.toolbars {
+                    let active = widgets.content_stack.visible_child_name();
+                    let name = active.as_ref().map(|s| s.as_str()).unwrap_or("");
+                    toolbars.search.set_visible(name == "search");
+                    toolbars.discover.set_visible(name == "discover");
+                    toolbars.library.set_visible(name == "library");
+
+                    if name == "library" {
+                        if let Some(library) = &self.library {
+                            library.emit(LibraryMsg::Refresh);
+                        }
+                    }
+                }
+            }
+            AppMsg::ClientError(e) => {
+                sender.input(AppMsg::ShowToast(format!("Login failed: {}", e)));
+            }
+            AppMsg::DiscoverAction(DiscoverOutput::Play(url)) => {
+                sender.input(AppMsg::PlayAlbum(url));
+            }
+            AppMsg::SearchAction(SearchOutput::Play(url)) => {
+                sender.input(AppMsg::PlayAlbum(url));
+            }
+            AppMsg::LibraryAction(LibraryOutput::Play(url)) => {
+                sender.input(AppMsg::PlayAlbum(url));
+            }
+            AppMsg::PlayerAction(output) => match output {
+                PlayerOutput::NowPlaying => {}
+                PlayerOutput::Wishlist => {
+                    sender.input(AppMsg::AddToWishlist);
+                }
+            },
+            AppMsg::PlayAlbum(url) => {
+                if url.is_empty() {
+                    sender.input(AppMsg::ShowToast("No album URL".to_string()));
+                    return;
+                }
+                if let Some(client) = self.client.clone() {
+                    sender.oneshot_command(async move {
+                        match client.get_album_details(&url).await {
+                            Ok(details) => AppCmd::AlbumLoaded(Ok(details)),
+                            Err(e) => AppCmd::AlbumLoaded(Err(e.to_string())),
+                        }
+                    });
+                }
+            }
+            AppMsg::AlbumLoaded(result) => {
+                match result {
+                    Ok(details) => {
+                        let tracks: Vec<Track> = details.tracks.iter()
+                            .filter_map(|t| Some(Track {
+                                title: t.title.clone(),
+                                artist: t.artist.clone(),
+                                album: t.album.clone(),
+                                art_url: t.art_url.clone(),
+                                stream_url: t.stream_url.clone()?,
+                                duration: t.duration,
+                            }))
+                            .collect();
+
+                        if tracks.is_empty() {
+                            sender.input(AppMsg::ShowToast("No playable tracks".to_string()));
+                        } else {
+                            self.current_album = Some(details);
+                            if let Some(player) = &self.player {
+                                player.emit(PlayerMsg::PlayQueue(tracks, 0));
+                            }
+                        }
+                    }
+                    Err(e) => sender.input(AppMsg::ShowToast(format!("Failed: {}", e))),
+                }
+            }
+            AppMsg::AddToWishlist => {
+                if let Some(album) = self.current_album.as_ref() {
+                    if let Err(e) = open::that(&album.url) {
+                        sender.input(AppMsg::ShowToast(format!("Failed to open browser: {}", e)));
+                    }
+                }
+            }
+            AppMsg::Logout => {
+                storage::clear_cookies();
+                self.mode = AppMode::Login;
+                self.client = None;
+
+                if let Some(d) = self.discover.take() { widgets.content_stack.remove(d.widget()); }
+                if let Some(s) = self.search.take() { widgets.content_stack.remove(s.widget()); }
+                if let Some(l) = self.library.take() { widgets.content_stack.remove(l.widget()); }
+                if let Some(p) = self.player.take() { widgets.player_box.remove(p.widget()); }
+
+                if let Some(toolbars) = self.toolbars.take() {
+                    widgets.header_bar.remove(&toolbars.search);
+                    widgets.header_bar.remove(&toolbars.discover);
+                    widgets.header_bar.remove(&toolbars.library);
+                }
+            }
+            AppMsg::ShowToast(msg) => {
+                self.toast_overlay.add_toast(adw::Toast::new(&msg));
+            }
+        }
+
+        widgets.main_stack.set_visible_child_name(match self.mode {
+            AppMode::Login => "login",
+            AppMode::Main => "main",
+        });
+
+        self.update_view(widgets, sender);
+    }
+
+    fn update_cmd(&mut self, msg: Self::CommandOutput, sender: ComponentSender<Self>, _root: &Self::Root) {
+        match msg {
+            AppCmd::ClientReady(client) => sender.input(AppMsg::ClientReady(client)),
+            AppCmd::ClientError(e) => sender.input(AppMsg::ClientError(e)),
+            AppCmd::AlbumLoaded(r) => sender.input(AppMsg::AlbumLoaded(r)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum AppCmd {
+    ClientReady(BandcampClient),
+    ClientError(String),
+    AlbumLoaded(Result<AlbumDetails, String>),
+}
