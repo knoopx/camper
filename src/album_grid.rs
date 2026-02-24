@@ -50,7 +50,7 @@ impl SimpleComponent for AlbumGrid {
         wrap_box.set_margin_top(16);
         wrap_box.set_margin_bottom(16);
         wrap_box.set_valign(gtk4::Align::Start);
-        wrap_box.set_halign(gtk4::Align::Center);
+        wrap_box.set_halign(gtk4::Align::Fill);
 
         let model = Self { wrap_box };
         let widgets = view_output!();
