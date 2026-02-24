@@ -71,16 +71,22 @@ impl Component for Player {
             #[watch]
             set_visible: model.current_track.is_some(),
 
-            // Album art
-            gtk4::Frame {
-                set_width_request: 48,
-                set_height_request: 48,
+            // Album art (click to open in browser)
+            gtk4::Button {
+                add_css_class: "flat",
                 set_valign: gtk4::Align::Center,
-                set_overflow: gtk4::Overflow::Hidden,
+                set_tooltip_text: Some("Open in Browser"),
+                connect_clicked => PlayerMsg::Wishlist,
 
-                #[name = "art_image"]
-                gtk4::Image {
-                    set_pixel_size: 48,
+                gtk4::Frame {
+                    set_width_request: 48,
+                    set_height_request: 48,
+                    set_overflow: gtk4::Overflow::Hidden,
+
+                    #[name = "art_image"]
+                    gtk4::Image {
+                        set_pixel_size: 48,
+                    },
                 },
             },
 
@@ -192,13 +198,7 @@ impl Component for Player {
                     },
                 },
 
-                gtk4::Button {
-                    set_icon_name: "web-browser-symbolic",
-                    add_css_class: "flat",
-                    set_valign: gtk4::Align::Center,
-                    set_tooltip_text: Some("Open in Browser"),
-                    connect_clicked => PlayerMsg::Wishlist,
-                },
+
             },
         }
     }
