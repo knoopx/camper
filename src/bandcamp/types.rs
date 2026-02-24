@@ -13,7 +13,6 @@ pub struct CollectionItem {
     pub artist: String,
     pub art_url: Option<String>,
     pub url: String,
-    pub is_wishlist: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -88,14 +87,6 @@ pub const SORT_OPTIONS: &[(&str, &str)] = &[
     ("new", "New Arrivals"),
     ("rec", "Recommended"),
     ("pop", "Best Sellers"),
-];
-
-pub const FORMAT_OPTIONS: &[(&str, &str)] = &[
-    ("all", "Any Format"),
-    ("digital", "Digital"),
-    ("vinyl", "Vinyl"),
-    ("cd", "CD"),
-    ("cassette", "Cassette"),
 ];
 
 /// Subgenres grouped by parent genre slug. Each entry is (id, label).

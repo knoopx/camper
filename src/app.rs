@@ -19,6 +19,7 @@ use crate::login::{LoginOutput, LoginPage};
 use crate::player::{Player, PlayerMsg, PlayerOutput, Track};
 use crate::search::{SearchMsg, SearchOutput, SearchPage};
 use crate::storage::{self, UiState};
+use gtk4::gdk;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -40,9 +41,7 @@ pub struct App {
 }
 
 struct Toolbars {
-    search: gtk4::Box,
-    discover: gtk4::Box,
-    library: gtk4::Box,
+    stack: gtk4::Stack,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -68,6 +67,11 @@ pub enum AppMsg {
     SaveUiState,
     Logout,
     ShowToast(String),
+    PlayerToggle,
+    PlayerNext,
+    PlayerPrev,
+    PlayerVolumeUp,
+    PlayerVolumeDown,
 }
 
 #[relm4::component(pub)]
@@ -127,6 +131,15 @@ impl Component for App {
     }
 
     fn init(_: Self::Init, root: Self::Root, sender: ComponentSender<Self>) -> ComponentParts<Self> {
+        // Load custom CSS
+        let css = gtk4::CssProvider::new();
+        css.load_from_string(include_str!("style.css"));
+        gtk4::style_context_add_provider_for_display(
+            &gtk4::prelude::WidgetExt::display(&root),
+            &css,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
         let login = LoginPage::builder()
             .launch(())
             .forward(sender.input_sender(), |msg| match msg {
@@ -170,6 +183,69 @@ impl Component for App {
             Some(&false.to_value()),
         );
         root.add_breakpoint(narrow_breakpoint);
+
+        // Global keyboard shortcuts
+        let s = sender.clone();
+        let content_stack = widgets.content_stack.clone();
+        let key_ctrl = gtk4::EventControllerKey::new();
+        key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        key_ctrl.connect_key_pressed(move |_, key, _, modifiers| {
+            let ctrl = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
+
+            // Ctrl+1/2/3 — switch tabs
+            if ctrl {
+                let tab = match key {
+                    gdk::Key::_1 => Some("search"),
+                    gdk::Key::_2 => Some("discover"),
+                    gdk::Key::_3 => Some("library"),
+                    _ => None,
+                };
+                if let Some(name) = tab {
+                    content_stack.set_visible_child_name(name);
+                    return gtk4::glib::Propagation::Stop;
+                }
+            }
+
+            // Skip media shortcuts when focus is on a text input widget
+            let root_widget = content_stack.root();
+            let focused_on_text = root_widget
+                .as_ref()
+                .and_then(|r| r.focus())
+                .map(|w| w.is::<gtk4::SearchEntry>() || w.is::<gtk4::Entry>() || w.is::<gtk4::Text>())
+                .unwrap_or(false);
+
+            if !focused_on_text {
+                match key {
+                    // Space — play/pause
+                    gdk::Key::space => {
+                        s.input(AppMsg::PlayerToggle);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    // Ctrl+Right / Ctrl+Left — next/prev track
+                    gdk::Key::Right if ctrl => {
+                        s.input(AppMsg::PlayerNext);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    gdk::Key::Left if ctrl => {
+                        s.input(AppMsg::PlayerPrev);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    // Ctrl+Up / Ctrl+Down — volume
+                    gdk::Key::Up if ctrl => {
+                        s.input(AppMsg::PlayerVolumeUp);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    gdk::Key::Down if ctrl => {
+                        s.input(AppMsg::PlayerVolumeDown);
+                        return gtk4::glib::Propagation::Stop;
+                    }
+                    _ => {}
+                }
+            }
+
+            gtk4::glib::Propagation::Proceed
+        });
+        root.add_controller(key_ctrl);
 
         if let Some(cookies) = storage::load_cookies() {
             sender.input(AppMsg::LoginSuccess(cookies));
@@ -249,18 +325,20 @@ impl Component for App {
                 if let Some(sort) = self.ui_state.discover_sort {
                     discover.emit(DiscoverMsg::SetSort(sort));
                 }
-                if let Some(format) = self.ui_state.discover_format {
-                    discover.emit(DiscoverMsg::SetFormat(format));
-                }
 
-                // Restore saved library filter
-                if let Some(ref f) = self.ui_state.library_filter {
-                    let filter = match f.as_str() {
-                        "collection" => crate::library::Filter::Collection,
-                        "wishlist" => crate::library::Filter::Wishlist,
-                        _ => crate::library::Filter::All,
+
+                // Restore saved library sort/query
+                if let Some(ref s) = self.ui_state.library_sort {
+                    let sort = match s.as_str() {
+                        "name" => crate::library::Sort::Name,
+                        _ => crate::library::Sort::Date,
                     };
-                    library.emit(LibraryMsg::SetFilter(filter));
+                    library.emit(LibraryMsg::SetSort(sort));
+                }
+                if let Some(ref q) = self.ui_state.library_query {
+                    if !q.is_empty() {
+                        library.emit(LibraryMsg::SetQuery(q.clone()));
+                    }
                 }
 
                 // Build toolbars and pack into header bar
@@ -268,14 +346,15 @@ impl Component for App {
                 let discover_toolbar = crate::discover::build_toolbar(discover.sender(), &self.ui_state);
                 let library_toolbar = crate::library::build_toolbar(library.sender(), &self.ui_state);
 
-                widgets.header_bar.pack_start(&search_toolbar);
-                widgets.header_bar.pack_start(&discover_toolbar);
-                widgets.header_bar.pack_start(&library_toolbar);
+                let toolbar_stack = gtk4::Stack::new();
+                toolbar_stack.set_hhomogeneous(true);
+                toolbar_stack.add_named(&search_toolbar, Some("search"));
+                toolbar_stack.add_named(&discover_toolbar, Some("discover"));
+                toolbar_stack.add_named(&library_toolbar, Some("library"));
+                widgets.header_bar.pack_start(&toolbar_stack);
 
                 self.toolbars = Some(Toolbars {
-                    search: search_toolbar,
-                    discover: discover_toolbar,
-                    library: library_toolbar,
+                    stack: toolbar_stack,
                 });
 
                 widgets.content_stack.add_titled_with_icon(
@@ -319,9 +398,7 @@ impl Component for App {
                 if let Some(toolbars) = &self.toolbars {
                     let active = widgets.content_stack.visible_child_name();
                     let name = active.as_ref().map(|s| s.as_str()).unwrap_or("");
-                    toolbars.search.set_visible(name == "search");
-                    toolbars.discover.set_visible(name == "discover");
-                    toolbars.library.set_visible(name == "library");
+                    toolbars.stack.set_visible_child_name(name);
 
                     if name == "library" {
                         if let Some(library) = &self.library {
@@ -354,10 +431,7 @@ impl Component for App {
                     self.ui_state.discover_sort = Some(i);
                     sender.input(AppMsg::SaveUiState);
                 }
-                DiscoverOutput::FormatChanged(i) => {
-                    self.ui_state.discover_format = Some(i);
-                    sender.input(AppMsg::SaveUiState);
-                }
+
             },
             AppMsg::SearchAction(action) => match action {
                 SearchOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
@@ -368,12 +442,15 @@ impl Component for App {
             },
             AppMsg::LibraryAction(action) => match action {
                 LibraryOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
-                LibraryOutput::FilterChanged(f) => {
-                    self.ui_state.library_filter = Some(match f {
-                        crate::library::Filter::All => "all",
-                        crate::library::Filter::Collection => "collection",
-                        crate::library::Filter::Wishlist => "wishlist",
+                LibraryOutput::SortChanged(s) => {
+                    self.ui_state.library_sort = Some(match s {
+                        crate::library::Sort::Date => "date",
+                        crate::library::Sort::Name => "name",
                     }.to_string());
+                    sender.input(AppMsg::SaveUiState);
+                }
+                LibraryOutput::QueryChanged(q) => {
+                    self.ui_state.library_query = Some(q);
                     sender.input(AppMsg::SaveUiState);
                 }
             },
@@ -445,9 +522,34 @@ impl Component for App {
                 if let Some(p) = self.player.take() { widgets.player_box.remove(p.widget()); }
 
                 if let Some(toolbars) = self.toolbars.take() {
-                    widgets.header_bar.remove(&toolbars.search);
-                    widgets.header_bar.remove(&toolbars.discover);
-                    widgets.header_bar.remove(&toolbars.library);
+                    widgets.header_bar.remove(&toolbars.stack);
+                }
+            }
+            AppMsg::PlayerToggle => {
+                if let Some(player) = &self.player {
+                    player.emit(PlayerMsg::Toggle);
+                }
+            }
+            AppMsg::PlayerNext => {
+                if let Some(player) = &self.player {
+                    player.emit(PlayerMsg::Next);
+                }
+            }
+            AppMsg::PlayerPrev => {
+                if let Some(player) = &self.player {
+                    player.emit(PlayerMsg::Prev);
+                }
+            }
+            AppMsg::PlayerVolumeUp => {
+                if let Some(player) = &self.player {
+                    let vol = (self.ui_state.volume.unwrap_or(1.0) + 0.05).min(1.0);
+                    player.emit(PlayerMsg::SetVolume(vol));
+                }
+            }
+            AppMsg::PlayerVolumeDown => {
+                if let Some(player) = &self.player {
+                    let vol = (self.ui_state.volume.unwrap_or(1.0) - 0.05).max(0.0);
+                    player.emit(PlayerMsg::SetVolume(vol));
                 }
             }
             AppMsg::ShowToast(msg) => {

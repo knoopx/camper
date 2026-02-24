@@ -1,5 +1,5 @@
 use crate::album_grid::{AlbumData, AlbumGrid, AlbumGridMsg, AlbumGridOutput};
-use crate::bandcamp::{BandcampClient, DiscoverParams, GENRES, SORT_OPTIONS, FORMAT_OPTIONS, subgenres_for};
+use crate::bandcamp::{BandcampClient, DiscoverParams, GENRES, SORT_OPTIONS, subgenres_for};
 use gtk4::prelude::*;
 use relm4::prelude::*;
 
@@ -18,7 +18,7 @@ pub enum DiscoverMsg {
     SetGenre(u32),
     SetSubgenre(u32),
     SetSort(u32),
-    SetFormat(u32),
+
     Loaded(Result<Vec<AlbumData>, String>),
     GridAction(AlbumGridOutput),
 }
@@ -29,7 +29,7 @@ pub enum DiscoverOutput {
     GenreChanged(u32),
     SubgenreChanged(u32),
     SortChanged(u32),
-    FormatChanged(u32),
+
 }
 
 #[relm4::component(pub)]
@@ -107,13 +107,7 @@ impl Component for DiscoverPage {
                     sender.input(DiscoverMsg::Refresh);
                 }
             }
-            DiscoverMsg::SetFormat(i) => {
-                if let Some((k, _)) = FORMAT_OPTIONS.get(i as usize) {
-                    self.params.format = k.to_string();
-                    sender.output(DiscoverOutput::FormatChanged(i)).ok();
-                    sender.input(DiscoverMsg::Refresh);
-                }
-            }
+
             DiscoverMsg::Loaded(result) => {
                 self.loading = false;
                 if let Ok(albums) = result {
@@ -157,6 +151,7 @@ impl DiscoverPage {
 
 pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    toolbar.add_css_class("compact-toolbar");
 
     let genre_dd = gtk4::DropDown::new(
         Some(gtk4::StringList::new(&GENRES.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
@@ -207,17 +202,6 @@ pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>, ui_state: &crate::stor
     let s = sender.clone();
     sort_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetSort(dd.selected())); });
     toolbar.append(&sort_dd);
-
-    let format_dd = gtk4::DropDown::new(
-        Some(gtk4::StringList::new(&FORMAT_OPTIONS.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
-        None::<gtk4::Expression>,
-    );
-    if let Some(i) = ui_state.discover_format {
-        format_dd.set_selected(i);
-    }
-    let s = sender.clone();
-    format_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetFormat(dd.selected())); });
-    toolbar.append(&format_dd);
 
     toolbar
 }

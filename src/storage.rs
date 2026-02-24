@@ -39,8 +39,8 @@ pub struct UiState {
     pub discover_genre: Option<u32>,
     pub discover_subgenre: Option<u32>,
     pub discover_sort: Option<u32>,
-    pub discover_format: Option<u32>,
-    pub library_filter: Option<String>,
+    pub library_sort: Option<String>,
+    pub library_query: Option<String>,
     pub volume: Option<f64>,
 }
 

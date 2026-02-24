@@ -121,10 +121,11 @@ impl SearchPage {
 
 pub fn build_toolbar(sender: &relm4::Sender<SearchMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    toolbar.add_css_class("compact-toolbar");
 
     let entry = gtk4::SearchEntry::new();
     entry.set_placeholder_text(Some("Search albums..."));
-    entry.set_width_request(300);
+    entry.set_hexpand(true);
     if let Some(ref q) = ui_state.search_query {
         entry.set_text(q);
     }

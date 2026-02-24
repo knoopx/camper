@@ -1,0 +1,33 @@
+/* Rounded album art */
+.album-art,
+.album-art > border {
+  border-radius: 6px;
+  border: none;
+  background: none;
+}
+
+.album-title {
+  font-weight: 600;
+}
+
+/* Play overlay on album art hover */
+.play-overlay {
+  background-color: rgba(0, 0, 0, 0.45);
+  border-radius: 24px;
+}
+
+.play-overlay-icon {
+  color: white;
+}
+
+/* Compact toolbar controls in header bar */
+.compact-toolbar dropdown button {
+  font-size: 0.85em;
+  min-height: 24px;
+  padding: 2px 6px;
+}
+
+.compact-toolbar searchentry {
+  font-size: 0.85em;
+  min-height: 24px;
+}

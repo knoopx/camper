@@ -198,22 +198,16 @@ impl BandcampClient {
     }
 
     pub async fn get_collection(&self) -> Result<Vec<CollectionItem>> {
-        self.fetch_items(
-            &format!("{}/fancollection/1/collection_items", API_BASE),
-            false,
-        )
-        .await
+        self.fetch_items(&format!("{}/fancollection/1/collection_items", API_BASE))
+            .await
     }
 
     pub async fn get_wishlist(&self) -> Result<Vec<CollectionItem>> {
-        self.fetch_items(
-            &format!("{}/fancollection/1/wishlist_items", API_BASE),
-            true,
-        )
-        .await
+        self.fetch_items(&format!("{}/fancollection/1/wishlist_items", API_BASE))
+            .await
     }
 
-    async fn fetch_items(&self, url: &str, is_wishlist: bool) -> Result<Vec<CollectionItem>> {
+    async fn fetch_items(&self, url: &str) -> Result<Vec<CollectionItem>> {
         let fan_id = self.inner.fan.fan_id;
         let mut all_items = Vec::new();
         let mut token = format!(
@@ -246,7 +240,6 @@ impl BandcampClient {
                     artist: item.band_name.unwrap_or_default(),
                     art_url: item.item_art_id.map(art_url),
                     url: item.item_url.unwrap_or_default(),
-                    is_wishlist,
                 });
             }
 

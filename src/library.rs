@@ -4,18 +4,18 @@ use gtk4::prelude::*;
 use relm4::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Filter {
+pub enum Sort {
     #[default]
-    All,
-    Collection,
-    Wishlist,
+    Date,
+    Name,
 }
 
 pub struct LibraryPage {
     client: Option<BandcampClient>,
     grid: Controller<AlbumGrid>,
     all_items: Vec<CollectionItem>,
-    filter: Filter,
+    sort: Sort,
+    query: String,
     loading: bool,
 }
 
@@ -23,7 +23,8 @@ pub struct LibraryPage {
 pub enum LibraryMsg {
     SetClient(BandcampClient),
     Refresh,
-    SetFilter(Filter),
+    SetSort(Sort),
+    SetQuery(String),
     Loaded(Result<(Vec<CollectionItem>, Vec<CollectionItem>), String>),
     GridAction(AlbumGridOutput),
 }
@@ -31,7 +32,8 @@ pub enum LibraryMsg {
 #[derive(Debug)]
 pub enum LibraryOutput {
     Play(String),
-    FilterChanged(Filter),
+    SortChanged(Sort),
+    QueryChanged(String),
 }
 
 #[relm4::component(pub)]
@@ -58,7 +60,8 @@ impl Component for LibraryPage {
             client: None,
             grid,
             all_items: Vec::new(),
-            filter: Filter::All,
+            sort: Sort::Date,
+            query: String::new(),
             loading: false,
         };
 
@@ -76,10 +79,15 @@ impl Component for LibraryPage {
             LibraryMsg::Refresh => {
                 self.fetch(sender.clone());
             }
-            LibraryMsg::SetFilter(filter) => {
-                self.filter = filter;
-                self.apply_filter();
-                sender.output(LibraryOutput::FilterChanged(filter)).ok();
+            LibraryMsg::SetSort(sort) => {
+                self.sort = sort;
+                self.apply_sort();
+                sender.output(LibraryOutput::SortChanged(sort)).ok();
+            }
+            LibraryMsg::SetQuery(q) => {
+                self.query = q.clone();
+                self.apply_sort();
+                sender.output(LibraryOutput::QueryChanged(q)).ok();
             }
             LibraryMsg::Loaded(result) => {
                 self.loading = false;
@@ -87,7 +95,7 @@ impl Component for LibraryPage {
                     self.all_items.clear();
                     self.all_items.extend(collection);
                     self.all_items.extend(wishlist);
-                    self.apply_filter();
+                    self.apply_sort();
                 }
             }
             LibraryMsg::GridAction(action) => match action {
@@ -116,15 +124,23 @@ impl LibraryPage {
         });
     }
 
-    fn apply_filter(&mut self) {
+    fn apply_sort(&mut self) {
         self.grid.emit(AlbumGridMsg::Clear);
 
-        let items: Vec<AlbumData> = self.all_items.iter()
-            .filter(|item| match self.filter {
-                Filter::All => true,
-                Filter::Collection => !item.is_wishlist,
-                Filter::Wishlist => item.is_wishlist,
+        let q = self.query.to_lowercase();
+        let mut items: Vec<&CollectionItem> = self.all_items.iter()
+            .filter(|item| {
+                q.is_empty()
+                    || item.title.to_lowercase().contains(&q)
+                    || item.artist.to_lowercase().contains(&q)
             })
+            .collect();
+        match self.sort {
+            Sort::Date => {} // already in date order from API
+            Sort::Name => items.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+        }
+
+        let albums: Vec<AlbumData> = items.iter()
             .map(|item| AlbumData {
                 title: item.title.clone(),
                 artist: item.artist.clone(),
@@ -134,34 +150,49 @@ impl LibraryPage {
             })
             .collect();
 
-        self.grid.emit(AlbumGridMsg::Append(items));
+        self.grid.emit(AlbumGridMsg::Append(albums));
     }
 }
 
 pub fn build_toolbar(sender: &relm4::Sender<LibraryMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    toolbar.add_css_class("compact-toolbar");
 
-    let saved = ui_state.library_filter.as_deref().unwrap_or("all");
-
-    let all_btn = gtk4::ToggleButton::with_label("All");
-    all_btn.set_active(saved == "all");
+    let entry = gtk4::SearchEntry::new();
+    entry.set_placeholder_text(Some("Filter library..."));
+    entry.set_hexpand(true);
+    if let Some(ref q) = ui_state.library_query {
+        entry.set_text(q);
+    }
     let s = sender.clone();
-    all_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetFilter(Filter::All)); });
-    toolbar.append(&all_btn);
+    entry.connect_search_changed(move |e| {
+        s.emit(LibraryMsg::SetQuery(e.text().to_string()));
+    });
+    toolbar.append(&entry);
 
-    let col_btn = gtk4::ToggleButton::with_label("Collection");
-    col_btn.set_group(Some(&all_btn));
-    col_btn.set_active(saved == "collection");
-    let s = sender.clone();
-    col_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetFilter(Filter::Collection)); });
-    toolbar.append(&col_btn);
+    let sort_group = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    sort_group.add_css_class("linked");
 
-    let wish_btn = gtk4::ToggleButton::with_label("Wishlist");
-    wish_btn.set_group(Some(&all_btn));
-    wish_btn.set_active(saved == "wishlist");
+    let saved_sort = ui_state.library_sort.as_deref().unwrap_or("date");
+
+    let date_btn = gtk4::ToggleButton::new();
+    date_btn.set_icon_name("document-open-recent-symbolic");
+    date_btn.set_tooltip_text(Some("Sort by date"));
+    date_btn.set_active(saved_sort != "name");
     let s = sender.clone();
-    wish_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetFilter(Filter::Wishlist)); });
-    toolbar.append(&wish_btn);
+    date_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetSort(Sort::Date)); });
+    sort_group.append(&date_btn);
+
+    let name_btn = gtk4::ToggleButton::new();
+    name_btn.set_icon_name("view-sort-ascending-rtl-symbolic");
+    name_btn.set_tooltip_text(Some("Sort by name"));
+    name_btn.set_group(Some(&date_btn));
+    name_btn.set_active(saved_sort == "name");
+    let s = sender.clone();
+    name_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetSort(Sort::Name)); });
+    sort_group.append(&name_btn);
+
+    toolbar.append(&sort_group);
 
     toolbar
 }
