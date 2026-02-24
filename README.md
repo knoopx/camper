@@ -14,22 +14,21 @@ A minimalistic Bandcamp music player client for Linux, built with Rust, GTK4/lib
 - **Session Persistence**: Stay logged in across restarts
 - **Open in Browser**: Quick-open album pages from the player bar
 
-## Building
+## Installation
 
 ### With Nix (recommended)
 
 ```bash
-nix develop
-cargo build --release
-./target/release/camper
+nix run github:knoopx/camper
 ```
 
-### Without Nix
+### From source
 
 Dependencies: Rust 1.70+, GTK4, libadwaita, WebKitGTK 6.0, GStreamer (with plugins-base, plugins-good, plugins-bad)
 
 ```bash
 cargo build --release
+./target/release/camper
 ```
 
 ## Usage
