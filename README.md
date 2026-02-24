@@ -22,6 +22,12 @@ A minimalistic Bandcamp music player client for Linux, built with Rust, GTK4/lib
 nix run github:knoopx/camper
 ```
 
+### From the [AUR](https://aur.archlinux.org/packages/camper-git) (community maintained)
+
+```bash
+yay -S camper-git
+```
+
 ### From source
 
 Dependencies: Rust 1.70+, GTK4, libadwaita, WebKitGTK 6.0, GStreamer (with plugins-base, plugins-good, plugins-bad)
