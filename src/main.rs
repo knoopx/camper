@@ -15,6 +15,7 @@ use relm4::prelude::*;
 
 fn main() {
     relm4::RELM_THREADS.set(4).ok();
-    let app = RelmApp::new("io.github.camper");
+    let app = RelmApp::new("net.knoopx.camper");
+    gtk4::Window::set_default_icon_name("camper");
     app.run::<App>(());
 }
