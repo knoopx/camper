@@ -64,7 +64,10 @@ impl Component for Player {
         gtk4::Box {
             set_orientation: gtk4::Orientation::Horizontal,
             set_spacing: 8,
-            set_margin_all: 8,
+            set_margin_start: 8,
+            set_margin_end: 8,
+            set_margin_top: 4,
+            set_margin_bottom: 4,
             #[watch]
             set_visible: model.current_track.is_some(),
 
@@ -74,7 +77,6 @@ impl Component for Player {
                 set_height_request: 48,
                 set_valign: gtk4::Align::Center,
                 set_overflow: gtk4::Overflow::Hidden,
-
 
                 #[name = "art_image"]
                 gtk4::Image {
@@ -89,26 +91,30 @@ impl Component for Player {
                 set_width_request: 200,
 
                 gtk4::Label {
-                    set_halign: gtk4::Align::Start,
+                    set_xalign: 0.0,
                     set_ellipsize: gtk4::pango::EllipsizeMode::End,
-                    set_max_width_chars: 30,
                     #[watch]
                     set_label: &model.current_track.as_ref().map(|t| t.title.as_str()).unwrap_or(""),
                 },
 
                 gtk4::Label {
-                    set_halign: gtk4::Align::Start,
+                    set_xalign: 0.0,
                     set_ellipsize: gtk4::pango::EllipsizeMode::End,
-                    set_max_width_chars: 30,
                     add_css_class: "dim-label",
                     add_css_class: "caption",
                     #[watch]
-                    set_label: &model.current_track.as_ref().map(|t| format!("{} — {}", t.artist, t.album)).unwrap_or_default(),
+                    set_label: &model.current_track.as_ref().map(|t| t.album.as_str()).unwrap_or(""),
+                },
+
+                gtk4::Label {
+                    set_xalign: 0.0,
+                    set_ellipsize: gtk4::pango::EllipsizeMode::End,
+                    add_css_class: "dim-label",
+                    add_css_class: "caption",
+                    #[watch]
+                    set_label: &model.current_track.as_ref().map(|t| t.artist.as_str()).unwrap_or(""),
                 },
             },
-
-            // Spacer
-            gtk4::Box { set_hexpand: true },
 
             // Controls
             gtk4::Button {
@@ -134,9 +140,6 @@ impl Component for Player {
                 connect_clicked => PlayerMsg::Next,
             },
 
-            // Spacer
-            gtk4::Box { set_hexpand: true },
-
             // Time + seek
             gtk4::Label {
                 set_width_chars: 5,
@@ -149,7 +152,6 @@ impl Component for Player {
 
             #[name = "seek_scale"]
             gtk4::Scale {
-                set_width_request: 200,
                 set_hexpand: true,
                 set_valign: gtk4::Align::Center,
                 set_range: (0.0, 1.0),
@@ -165,29 +167,38 @@ impl Component for Player {
                 set_label: &format_time(model.duration),
             },
 
-            gtk4::Image {
-                set_icon_name: Some("audio-volume-high-symbolic"),
-                set_valign: gtk4::Align::Center,
-            },
-
-            gtk4::Scale {
+            // Volume + open in browser
+            #[name = "extra_controls"]
+            gtk4::Box {
                 set_orientation: gtk4::Orientation::Horizontal,
-                set_width_request: 80,
+                set_spacing: 8,
                 set_valign: gtk4::Align::Center,
-                set_range: (0.0, 1.0),
-                set_value: 1.0,
-                set_draw_value: false,
-                connect_value_changed[sender] => move |scale| {
-                    sender.input(PlayerMsg::SetVolume(scale.value()));
-                },
-            },
+                set_widget_name: "player-extra-controls",
 
-            gtk4::Button {
-                set_icon_name: "web-browser-symbolic",
-                add_css_class: "flat",
-                set_valign: gtk4::Align::Center,
-                set_tooltip_text: Some("Open in Browser"),
-                connect_clicked => PlayerMsg::Wishlist,
+                gtk4::Image {
+                    set_icon_name: Some("audio-volume-high-symbolic"),
+                    set_valign: gtk4::Align::Center,
+                },
+
+                gtk4::Scale {
+                    set_orientation: gtk4::Orientation::Horizontal,
+                    set_valign: gtk4::Align::Center,
+                    set_width_request: 80,
+                    set_range: (0.0, 1.0),
+                    set_value: 1.0,
+                    set_draw_value: false,
+                    connect_value_changed[sender] => move |scale| {
+                        sender.input(PlayerMsg::SetVolume(scale.value()));
+                    },
+                },
+
+                gtk4::Button {
+                    set_icon_name: "web-browser-symbolic",
+                    add_css_class: "flat",
+                    set_valign: gtk4::Align::Center,
+                    set_tooltip_text: Some("Open in Browser"),
+                    connect_clicked => PlayerMsg::Wishlist,
+                },
             },
         }
     }
