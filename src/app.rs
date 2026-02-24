@@ -1,3 +1,17 @@
+fn find_child_by_name(widget: &impl IsA<gtk4::Widget>, name: &str) -> Option<gtk4::Widget> {
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if c.widget_name() == name {
+            return Some(c);
+        }
+        if let Some(found) = find_child_by_name(&c, name) {
+            return Some(found);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
 use crate::bandcamp::{AlbumDetails, BandcampClient};
 use crate::discover::{DiscoverMsg, DiscoverOutput, DiscoverPage};
 use crate::library::{LibraryMsg, LibraryOutput, LibraryPage};
@@ -7,6 +21,7 @@ use crate::search::{SearchMsg, SearchOutput, SearchPage};
 use crate::storage;
 use gtk4::prelude::*;
 use libadwaita as adw;
+use libadwaita::prelude::*;
 use relm4::prelude::*;
 
 pub struct App {
@@ -20,6 +35,7 @@ pub struct App {
     current_album: Option<AlbumDetails>,
     toast_overlay: adw::ToastOverlay,
     toolbars: Option<Toolbars>,
+    narrow_breakpoint: adw::Breakpoint,
 }
 
 struct Toolbars {
@@ -62,8 +78,9 @@ impl Component for App {
     view! {
         adw::ApplicationWindow {
             set_title: Some("Camper"),
-            set_default_width: 1100,
-            set_default_height: 700,
+            set_default_width: 625,
+            set_default_height: 625,
+            set_size_request: (625, 400),
 
             #[local_ref]
             toast_overlay -> adw::ToastOverlay {
@@ -84,6 +101,7 @@ impl Component for App {
                                 set_policy: adw::ViewSwitcherPolicy::Wide,
                             },
 
+                            #[name = "logout_button"]
                             pack_end = &gtk4::Button {
                                 set_icon_name: "system-log-out-symbolic",
                                 set_tooltip_text: Some("Logout"),
@@ -115,6 +133,12 @@ impl Component for App {
 
         let toast_overlay = adw::ToastOverlay::new();
 
+        let narrow_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            900.0,
+            adw::LengthUnit::Px,
+        ));
+
         let model = Self {
             mode: AppMode::Login,
             login,
@@ -126,10 +150,23 @@ impl Component for App {
             current_album: None,
             toast_overlay: toast_overlay.clone(),
             toolbars: None,
+            narrow_breakpoint: narrow_breakpoint.clone(),
         };
 
         let toast_overlay = &model.toast_overlay;
         let widgets = view_output!();
+
+        narrow_breakpoint.add_setter(
+            &widgets.view_switcher,
+            "policy",
+            Some(&adw::ViewSwitcherPolicy::Narrow.to_value()),
+        );
+        narrow_breakpoint.add_setter(
+            &widgets.logout_button,
+            "visible",
+            Some(&false.to_value()),
+        );
+        root.add_breakpoint(narrow_breakpoint);
 
         if let Some(cookies) = storage::load_cookies() {
             sender.input(AppMsg::LoginSuccess(cookies));
@@ -213,6 +250,12 @@ impl Component for App {
                 );
 
                 widgets.player_box.append(player.widget());
+
+                // Hide player extra controls (volume, open in browser) on narrow layout
+                if let Some(extra) = find_child_by_name(player.widget(), "player-extra-controls") {
+                    self.narrow_breakpoint.add_setter(&extra, "visible", Some(&false.to_value()));
+                }
+
                 widgets.view_switcher.set_stack(Some(&widgets.content_stack));
 
                 // Listen for tab changes
