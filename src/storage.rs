@@ -37,6 +37,7 @@ pub struct UiState {
     pub active_tab: Option<String>,
     pub search_query: Option<String>,
     pub discover_genre: Option<u32>,
+    pub discover_subgenre: Option<u32>,
     pub discover_sort: Option<u32>,
     pub discover_format: Option<u32>,
     pub library_filter: Option<String>,

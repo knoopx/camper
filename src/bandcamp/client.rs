@@ -130,8 +130,8 @@ impl BandcampClient {
 
     pub async fn discover(&self, params: &DiscoverParams) -> Result<Vec<Album>> {
         let url = format!(
-            "{}/discover/3/get_web?g={}&s={}&p={}&gn=0&f={}&w=0&lo=0",
-            API_BASE, params.genre, params.sort, params.page, params.format
+            "{}/discover/3/get_web?g={}&s={}&p={}&gn={}&f={}&w=0&lo=0",
+            API_BASE, params.genre, params.sort, params.page, params.subgenre, params.format
         );
 
         let json: serde_json::Value = self

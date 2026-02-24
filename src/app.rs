@@ -243,6 +243,9 @@ impl Component for App {
                 if let Some(genre) = self.ui_state.discover_genre {
                     discover.emit(DiscoverMsg::SetGenre(genre));
                 }
+                if let Some(subgenre) = self.ui_state.discover_subgenre {
+                    discover.emit(DiscoverMsg::SetSubgenre(subgenre));
+                }
                 if let Some(sort) = self.ui_state.discover_sort {
                     discover.emit(DiscoverMsg::SetSort(sort));
                 }
@@ -340,6 +343,11 @@ impl Component for App {
                 DiscoverOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
                 DiscoverOutput::GenreChanged(i) => {
                     self.ui_state.discover_genre = Some(i);
+                    self.ui_state.discover_subgenre = Some(0);
+                    sender.input(AppMsg::SaveUiState);
+                }
+                DiscoverOutput::SubgenreChanged(i) => {
+                    self.ui_state.discover_subgenre = Some(i);
                     sender.input(AppMsg::SaveUiState);
                 }
                 DiscoverOutput::SortChanged(i) => {
