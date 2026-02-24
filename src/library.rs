@@ -31,6 +31,7 @@ pub enum LibraryMsg {
 #[derive(Debug)]
 pub enum LibraryOutput {
     Play(String),
+    FilterChanged(Filter),
 }
 
 #[relm4::component(pub)]
@@ -78,6 +79,7 @@ impl Component for LibraryPage {
             LibraryMsg::SetFilter(filter) => {
                 self.filter = filter;
                 self.apply_filter();
+                sender.output(LibraryOutput::FilterChanged(filter)).ok();
             }
             LibraryMsg::Loaded(result) => {
                 self.loading = false;
@@ -136,23 +138,27 @@ impl LibraryPage {
     }
 }
 
-pub fn build_toolbar(sender: &relm4::Sender<LibraryMsg>) -> gtk4::Box {
+pub fn build_toolbar(sender: &relm4::Sender<LibraryMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
 
+    let saved = ui_state.library_filter.as_deref().unwrap_or("all");
+
     let all_btn = gtk4::ToggleButton::with_label("All");
-    all_btn.set_active(true);
+    all_btn.set_active(saved == "all");
     let s = sender.clone();
     all_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetFilter(Filter::All)); });
     toolbar.append(&all_btn);
 
     let col_btn = gtk4::ToggleButton::with_label("Collection");
     col_btn.set_group(Some(&all_btn));
+    col_btn.set_active(saved == "collection");
     let s = sender.clone();
     col_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetFilter(Filter::Collection)); });
     toolbar.append(&col_btn);
 
     let wish_btn = gtk4::ToggleButton::with_label("Wishlist");
     wish_btn.set_group(Some(&all_btn));
+    wish_btn.set_active(saved == "wishlist");
     let s = sender.clone();
     wish_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetFilter(Filter::Wishlist)); });
     toolbar.append(&wish_btn);

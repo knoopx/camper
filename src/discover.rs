@@ -25,6 +25,9 @@ pub enum DiscoverMsg {
 #[derive(Debug)]
 pub enum DiscoverOutput {
     Play(String),
+    GenreChanged(u32),
+    SortChanged(u32),
+    FormatChanged(u32),
 }
 
 #[relm4::component(pub)]
@@ -79,18 +82,21 @@ impl Component for DiscoverPage {
             DiscoverMsg::SetGenre(i) => {
                 if let Some((k, _)) = GENRES.get(i as usize) {
                     self.params.genre = k.to_string();
+                    sender.output(DiscoverOutput::GenreChanged(i)).ok();
                     sender.input(DiscoverMsg::Refresh);
                 }
             }
             DiscoverMsg::SetSort(i) => {
                 if let Some((k, _)) = SORT_OPTIONS.get(i as usize) {
                     self.params.sort = k.to_string();
+                    sender.output(DiscoverOutput::SortChanged(i)).ok();
                     sender.input(DiscoverMsg::Refresh);
                 }
             }
             DiscoverMsg::SetFormat(i) => {
                 if let Some((k, _)) = FORMAT_OPTIONS.get(i as usize) {
                     self.params.format = k.to_string();
+                    sender.output(DiscoverOutput::FormatChanged(i)).ok();
                     sender.input(DiscoverMsg::Refresh);
                 }
             }
@@ -135,13 +141,16 @@ impl DiscoverPage {
     }
 }
 
-pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>) -> gtk4::Box {
+pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
 
     let genre_dd = gtk4::DropDown::new(
         Some(gtk4::StringList::new(&GENRES.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
         None::<gtk4::Expression>,
     );
+    if let Some(i) = ui_state.discover_genre {
+        genre_dd.set_selected(i);
+    }
     let s = sender.clone();
     genre_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetGenre(dd.selected())); });
     toolbar.append(&genre_dd);
@@ -150,6 +159,9 @@ pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>) -> gtk4::Box {
         Some(gtk4::StringList::new(&SORT_OPTIONS.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
         None::<gtk4::Expression>,
     );
+    if let Some(i) = ui_state.discover_sort {
+        sort_dd.set_selected(i);
+    }
     let s = sender.clone();
     sort_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetSort(dd.selected())); });
     toolbar.append(&sort_dd);
@@ -158,6 +170,9 @@ pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>) -> gtk4::Box {
         Some(gtk4::StringList::new(&FORMAT_OPTIONS.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
         None::<gtk4::Expression>,
     );
+    if let Some(i) = ui_state.discover_format {
+        format_dd.set_selected(i);
+    }
     let s = sender.clone();
     format_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetFormat(dd.selected())); });
     toolbar.append(&format_dd);

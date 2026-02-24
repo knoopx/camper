@@ -22,6 +22,7 @@ pub enum SearchMsg {
 #[derive(Debug)]
 pub enum SearchOutput {
     Play(String),
+    QueryChanged(String),
 }
 
 #[relm4::component(pub)]
@@ -62,7 +63,8 @@ impl Component for SearchPage {
                 self.client = Some(client);
             }
             SearchMsg::QueryChanged(q) => {
-                self.query = q;
+                self.query = q.clone();
+                sender.output(SearchOutput::QueryChanged(q)).ok();
             }
             SearchMsg::Submit => {
                 if self.query.trim().is_empty() || self.loading {
@@ -117,12 +119,15 @@ impl SearchPage {
     }
 }
 
-pub fn build_toolbar(sender: &relm4::Sender<SearchMsg>) -> gtk4::Box {
+pub fn build_toolbar(sender: &relm4::Sender<SearchMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
 
     let entry = gtk4::SearchEntry::new();
     entry.set_placeholder_text(Some("Search albums..."));
     entry.set_width_request(300);
+    if let Some(ref q) = ui_state.search_query {
+        entry.set_text(q);
+    }
     let s = sender.clone();
     entry.connect_search_changed(move |e| {
         s.emit(SearchMsg::QueryChanged(e.text().to_string()));

@@ -51,6 +51,7 @@ pub enum PlayerMsg {
 pub enum PlayerOutput {
     NowPlaying,
     Wishlist,
+    VolumeChanged(f64),
 }
 
 #[relm4::component(pub)]
@@ -186,6 +187,7 @@ impl Component for Player {
                     set_valign: gtk4::Align::Center,
                 },
 
+                #[name = "volume_scale"]
                 gtk4::Scale {
                     set_orientation: gtk4::Orientation::Horizontal,
                     set_valign: gtk4::Align::Center,
@@ -338,6 +340,10 @@ impl Component for Player {
             PlayerMsg::SetVolume(v) => {
                 self.volume = v;
                 self.pipeline.set_property("volume", v);
+                if (widgets.volume_scale.value() - v).abs() > 0.001 {
+                    widgets.volume_scale.set_value(v);
+                }
+                sender.output(PlayerOutput::VolumeChanged(v)).ok();
             }
             PlayerMsg::Tick => {
                 if self.playing {

@@ -18,7 +18,7 @@ use crate::library::{LibraryMsg, LibraryOutput, LibraryPage};
 use crate::login::{LoginOutput, LoginPage};
 use crate::player::{Player, PlayerMsg, PlayerOutput, Track};
 use crate::search::{SearchMsg, SearchOutput, SearchPage};
-use crate::storage;
+use crate::storage::{self, UiState};
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -36,6 +36,7 @@ pub struct App {
     toast_overlay: adw::ToastOverlay,
     toolbars: Option<Toolbars>,
     narrow_breakpoint: adw::Breakpoint,
+    ui_state: UiState,
 }
 
 struct Toolbars {
@@ -64,6 +65,7 @@ pub enum AppMsg {
     AlbumLoaded(Result<AlbumDetails, String>),
     AddToWishlist,
     TabChanged,
+    SaveUiState,
     Logout,
     ShowToast(String),
 }
@@ -151,6 +153,7 @@ impl Component for App {
             toast_overlay: toast_overlay.clone(),
             toolbars: None,
             narrow_breakpoint: narrow_breakpoint.clone(),
+            ui_state: storage::load_ui_state(),
         };
 
         let toast_overlay = &model.toast_overlay;
@@ -224,10 +227,43 @@ impl Component for App {
                     .launch(())
                     .forward(sender.input_sender(), AppMsg::PlayerAction);
 
+                // Restore saved volume
+                if let Some(vol) = self.ui_state.volume {
+                    player.emit(PlayerMsg::SetVolume(vol));
+                }
+
+                // Restore saved search query
+                if let Some(ref q) = self.ui_state.search_query {
+                    if !q.is_empty() {
+                        search.emit(SearchMsg::QueryChanged(q.clone()));
+                    }
+                }
+
+                // Restore saved discover filters
+                if let Some(genre) = self.ui_state.discover_genre {
+                    discover.emit(DiscoverMsg::SetGenre(genre));
+                }
+                if let Some(sort) = self.ui_state.discover_sort {
+                    discover.emit(DiscoverMsg::SetSort(sort));
+                }
+                if let Some(format) = self.ui_state.discover_format {
+                    discover.emit(DiscoverMsg::SetFormat(format));
+                }
+
+                // Restore saved library filter
+                if let Some(ref f) = self.ui_state.library_filter {
+                    let filter = match f.as_str() {
+                        "collection" => crate::library::Filter::Collection,
+                        "wishlist" => crate::library::Filter::Wishlist,
+                        _ => crate::library::Filter::All,
+                    };
+                    library.emit(LibraryMsg::SetFilter(filter));
+                }
+
                 // Build toolbars and pack into header bar
-                let search_toolbar = crate::search::build_toolbar(search.sender());
-                let discover_toolbar = crate::discover::build_toolbar(discover.sender());
-                let library_toolbar = crate::library::build_toolbar(library.sender());
+                let search_toolbar = crate::search::build_toolbar(search.sender(), &self.ui_state);
+                let discover_toolbar = crate::discover::build_toolbar(discover.sender(), &self.ui_state);
+                let library_toolbar = crate::library::build_toolbar(library.sender(), &self.ui_state);
 
                 widgets.header_bar.pack_start(&search_toolbar);
                 widgets.header_bar.pack_start(&discover_toolbar);
@@ -271,8 +307,9 @@ impl Component for App {
                 self.client = Some(client);
                 self.mode = AppMode::Main;
 
-                // Default to library tab
-                widgets.content_stack.set_visible_child_name("library");
+                // Restore saved tab or default to library
+                let tab = self.ui_state.active_tab.as_deref().unwrap_or("library");
+                widgets.content_stack.set_visible_child_name(tab);
                 sender.input(AppMsg::TabChanged);
             }
             AppMsg::TabChanged => {
@@ -288,24 +325,58 @@ impl Component for App {
                             library.emit(LibraryMsg::Refresh);
                         }
                     }
+
+                    self.ui_state.active_tab = Some(name.to_string());
+                    sender.input(AppMsg::SaveUiState);
                 }
+            }
+            AppMsg::SaveUiState => {
+                let _ = storage::save_ui_state(&self.ui_state);
             }
             AppMsg::ClientError(e) => {
                 sender.input(AppMsg::ShowToast(format!("Login failed: {}", e)));
             }
-            AppMsg::DiscoverAction(DiscoverOutput::Play(url)) => {
-                sender.input(AppMsg::PlayAlbum(url));
-            }
-            AppMsg::SearchAction(SearchOutput::Play(url)) => {
-                sender.input(AppMsg::PlayAlbum(url));
-            }
-            AppMsg::LibraryAction(LibraryOutput::Play(url)) => {
-                sender.input(AppMsg::PlayAlbum(url));
-            }
+            AppMsg::DiscoverAction(action) => match action {
+                DiscoverOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
+                DiscoverOutput::GenreChanged(i) => {
+                    self.ui_state.discover_genre = Some(i);
+                    sender.input(AppMsg::SaveUiState);
+                }
+                DiscoverOutput::SortChanged(i) => {
+                    self.ui_state.discover_sort = Some(i);
+                    sender.input(AppMsg::SaveUiState);
+                }
+                DiscoverOutput::FormatChanged(i) => {
+                    self.ui_state.discover_format = Some(i);
+                    sender.input(AppMsg::SaveUiState);
+                }
+            },
+            AppMsg::SearchAction(action) => match action {
+                SearchOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
+                SearchOutput::QueryChanged(q) => {
+                    self.ui_state.search_query = Some(q);
+                    sender.input(AppMsg::SaveUiState);
+                }
+            },
+            AppMsg::LibraryAction(action) => match action {
+                LibraryOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
+                LibraryOutput::FilterChanged(f) => {
+                    self.ui_state.library_filter = Some(match f {
+                        crate::library::Filter::All => "all",
+                        crate::library::Filter::Collection => "collection",
+                        crate::library::Filter::Wishlist => "wishlist",
+                    }.to_string());
+                    sender.input(AppMsg::SaveUiState);
+                }
+            },
             AppMsg::PlayerAction(output) => match output {
                 PlayerOutput::NowPlaying => {}
                 PlayerOutput::Wishlist => {
                     sender.input(AppMsg::AddToWishlist);
+                }
+                PlayerOutput::VolumeChanged(v) => {
+                    self.ui_state.volume = Some(v);
+                    sender.input(AppMsg::SaveUiState);
                 }
             },
             AppMsg::PlayAlbum(url) => {
