@@ -58,8 +58,8 @@
           inherit nativeBuildInputs buildInputs;
 
           postInstall = ''
-            install -Dm644 res/camper.svg $out/share/icons/hicolor/scalable/apps/camper.svg
-            install -Dm644 res/camper.desktop $out/share/applications/camper.desktop
+            install -Dm644 res/net.knoopx.camper.svg $out/share/icons/hicolor/scalable/apps/net.knoopx.camper.svg
+            install -Dm644 res/net.knoopx.camper.desktop $out/share/applications/net.knoopx.camper.desktop
           '';
 
           meta = with pkgs.lib; {

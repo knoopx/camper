@@ -2,7 +2,7 @@
 Name=Camper
 Comment=A simple Bandcamp music player client
 Exec=camper
-Icon=camper
+Icon=net.knoopx.camper
 Terminal=false
 Type=Application
 Categories=Audio;Music;Player;
