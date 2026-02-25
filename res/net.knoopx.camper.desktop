@@ -6,3 +6,4 @@ Icon=net.knoopx.camper
 Terminal=false
 Type=Application
 Categories=Audio;Music;Player;
+StartupWMClass=net.knoopx.camper
