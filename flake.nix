@@ -58,7 +58,7 @@
           inherit nativeBuildInputs buildInputs;
 
           postInstall = ''
-            install -Dm644 res/camper.png $out/share/icons/hicolor/512x512/apps/camper.png
+            install -Dm644 res/camper.svg $out/share/icons/hicolor/scalable/apps/camper.svg
             install -Dm644 res/camper.desktop $out/share/applications/camper.desktop
           '';
 
