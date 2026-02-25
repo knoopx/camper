@@ -3,11 +3,18 @@ use crate::bandcamp::{BandcampClient, DiscoverParams, GENRES, SORT_OPTIONS, subg
 use gtk4::prelude::*;
 use relm4::prelude::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FetchMode {
+    Fresh,
+    LoadMore,
+}
+
 pub struct DiscoverPage {
     client: Option<BandcampClient>,
     grid: Controller<AlbumGrid>,
     params: DiscoverParams,
     loading: bool,
+    fetch_mode: FetchMode,
 }
 
 #[derive(Debug)]
@@ -57,6 +64,7 @@ impl Component for DiscoverPage {
             grid,
             params: DiscoverParams::default(),
             loading: false,
+            fetch_mode: FetchMode::Fresh,
         };
 
         let widgets = view_output!();
@@ -72,12 +80,13 @@ impl Component for DiscoverPage {
             }
             DiscoverMsg::Refresh => {
                 self.params.page = 0;
-                self.grid.emit(AlbumGridMsg::Clear);
+                self.fetch_mode = FetchMode::Fresh;
                 self.fetch(sender.clone());
             }
             DiscoverMsg::LoadMore => {
                 if !self.loading {
                     self.params.page += 1;
+                    self.fetch_mode = FetchMode::LoadMore;
                     self.fetch(sender.clone());
                 }
             }
@@ -110,8 +119,12 @@ impl Component for DiscoverPage {
 
             DiscoverMsg::Loaded(result) => {
                 self.loading = false;
-                if let Ok(albums) = result {
-                    self.grid.emit(AlbumGridMsg::Append(albums));
+                match result {
+                    Ok(albums) => match self.fetch_mode {
+                        FetchMode::Fresh => self.grid.emit(AlbumGridMsg::Replace(albums)),
+                        FetchMode::LoadMore => self.grid.emit(AlbumGridMsg::Append(albums)),
+                    },
+                    Err(e) => eprintln!("Discover fetch failed: {e}"),
                 }
             }
             DiscoverMsg::GridAction(action) => match action {

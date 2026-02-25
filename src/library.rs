@@ -91,11 +91,14 @@ impl Component for LibraryPage {
             }
             LibraryMsg::Loaded(result) => {
                 self.loading = false;
-                if let Ok((collection, wishlist)) = result {
-                    self.all_items.clear();
-                    self.all_items.extend(collection);
-                    self.all_items.extend(wishlist);
-                    self.apply_sort();
+                match result {
+                    Ok((collection, wishlist)) => {
+                        self.all_items.clear();
+                        self.all_items.extend(collection);
+                        self.all_items.extend(wishlist);
+                        self.apply_sort();
+                    }
+                    Err(e) => eprintln!("Library fetch failed: {e}"),
                 }
             }
             LibraryMsg::GridAction(action) => match action {
@@ -125,8 +128,6 @@ impl LibraryPage {
     }
 
     fn apply_sort(&mut self) {
-        self.grid.emit(AlbumGridMsg::Clear);
-
         let q = self.query.to_lowercase();
         let mut items: Vec<&CollectionItem> = self.all_items.iter()
             .filter(|item| {
@@ -150,7 +151,7 @@ impl LibraryPage {
             })
             .collect();
 
-        self.grid.emit(AlbumGridMsg::Append(albums));
+        self.grid.emit(AlbumGridMsg::Replace(albums));
     }
 }
 

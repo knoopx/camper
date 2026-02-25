@@ -70,13 +70,13 @@ impl Component for SearchPage {
                 if self.query.trim().is_empty() || self.loading {
                     return;
                 }
-                self.grid.emit(AlbumGridMsg::Clear);
                 self.fetch(sender.clone());
             }
             SearchMsg::Loaded(result) => {
                 self.loading = false;
-                if let Ok(albums) = result {
-                    self.grid.emit(AlbumGridMsg::Append(albums));
+                match result {
+                    Ok(albums) => self.grid.emit(AlbumGridMsg::Replace(albums)),
+                    Err(e) => eprintln!("Search failed: {e}"),
                 }
             }
             SearchMsg::GridAction(action) => match action {

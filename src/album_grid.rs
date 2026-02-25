@@ -16,12 +16,13 @@ pub struct AlbumData {
 pub struct AlbumGrid {
     wrap_box: adw::WrapBox,
     stack: gtk4::Stack,
+    current: Vec<AlbumData>,
 }
 
 #[derive(Debug)]
 pub enum AlbumGridMsg {
-    Clear,
     Append(Vec<AlbumData>),
+    Replace(Vec<AlbumData>),
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +77,11 @@ impl SimpleComponent for AlbumGrid {
         stack.add_named(&scroll, Some("content"));
         stack.set_visible_child_name("empty");
 
-        let model = Self { wrap_box, stack: stack.clone() };
+        let model = Self {
+            wrap_box,
+            stack: stack.clone(),
+            current: Vec::new(),
+        };
         let widgets = view_output!();
         root.append(&stack);
 
@@ -93,22 +98,43 @@ impl SimpleComponent for AlbumGrid {
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
-            AlbumGridMsg::Clear => {
-                while let Some(child) = self.wrap_box.first_child() {
-                    self.wrap_box.remove(&child);
-                }
-                self.stack.set_visible_child_name("empty");
-            }
             AlbumGridMsg::Append(items) => {
                 if !items.is_empty() {
                     self.stack.set_visible_child_name("content");
                 }
-                for data in items {
-                    let card = build_card(&data, &sender);
-                    self.wrap_box.append(&card);
+                self.append_cards(&items, &sender);
+                self.current.extend(items);
+            }
+            AlbumGridMsg::Replace(items) => {
+                if self.same_albums(&items) {
+                    return;
                 }
+                while let Some(child) = self.wrap_box.first_child() {
+                    self.wrap_box.remove(&child);
+                }
+                if items.is_empty() {
+                    self.stack.set_visible_child_name("empty");
+                } else {
+                    self.stack.set_visible_child_name("content");
+                    self.append_cards(&items, &sender);
+                }
+                self.current = items;
             }
         }
+    }
+}
+
+impl AlbumGrid {
+    fn append_cards(&self, items: &[AlbumData], sender: &ComponentSender<Self>) {
+        for data in items {
+            let card = build_card(data, sender);
+            self.wrap_box.append(&card);
+        }
+    }
+
+    fn same_albums(&self, items: &[AlbumData]) -> bool {
+        self.current.len() == items.len()
+            && self.current.iter().zip(items).all(|(a, b)| a.url == b.url)
     }
 }
 
