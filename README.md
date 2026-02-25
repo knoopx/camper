@@ -2,7 +2,9 @@
 
 A minimalistic Bandcamp music player client for Linux, built with Rust, GTK4/libadwaita, and GStreamer.
 
-![Screenshot](screenshot.png)
+| Library                    | Discover                             | Search                           |
+| -------------------------- | ------------------------------------ | -------------------------------- |
+| ![Library](screenshot.png) | ![Discover](screenshot-discover.png) | ![Search](screenshot-search.png) |
 
 ## Features
 
