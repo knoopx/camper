@@ -58,17 +58,8 @@
           inherit nativeBuildInputs buildInputs;
 
           postInstall = ''
-            install -Dm644 camper.png $out/share/icons/hicolor/512x512/apps/camper.png
-            install -Dm644 ${builtins.toFile "camper.desktop" ''
-              [Desktop Entry]
-              Name=Camper
-              Comment=A simple Bandcamp music player client
-              Exec=camper
-              Icon=camper
-              Terminal=false
-              Type=Application
-              Categories=Audio;Music;Player;
-            ''} $out/share/applications/camper.desktop
+            install -Dm644 res/camper.png $out/share/icons/hicolor/512x512/apps/camper.png
+            install -Dm644 res/camper.desktop $out/share/applications/camper.desktop
           '';
 
           meta = with pkgs.lib; {
