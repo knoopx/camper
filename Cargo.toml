@@ -19,7 +19,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 open = "5"
-scraper = "0.20"
 dirs = "5"
 mpris-server = "0.8"
 futures = "0.3"

@@ -1,17 +1,12 @@
 use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE};
 use reqwest::Client;
-use scraper::{Html, Selector};
 use serde::Deserialize;
 use std::sync::Arc;
 
 use super::types::*;
 
 const API_BASE: &str = "https://bandcamp.com/api";
-
-fn art_url(art_id: u64) -> String {
-    format!("https://f4.bcbits.com/img/a{}_10.jpg", art_id)
-}
 
 #[derive(Debug, Clone, Deserialize)]
 struct CollectionSummaryResponse {
@@ -37,33 +32,6 @@ struct CollectionItemData {
     band_name: Option<String>,
     item_art_id: Option<u64>,
     item_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TralbumData {
-    current: Option<TralbumCurrent>,
-    trackinfo: Option<Vec<TralbumTrack>>,
-    art_id: Option<u64>,
-    artist: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TralbumCurrent {
-    title: Option<String>,
-    artist: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TralbumTrack {
-    title: Option<String>,
-    duration: Option<f64>,
-    file: Option<TralbumFile>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TralbumFile {
-    #[serde(rename = "mp3-128")]
-    mp3_128: Option<String>,
 }
 
 #[derive(Debug)]
@@ -129,10 +97,13 @@ impl BandcampClient {
     }
 
     pub async fn discover(&self, params: &DiscoverParams) -> Result<Vec<Album>> {
-        let url = format!(
-            "{}/discover/3/get_web?g={}&s={}&p={}&gn={}&f={}&w=0&lo=0",
-            API_BASE, params.genre, params.sort, params.page, params.subgenre, params.format
+        let mut url = format!(
+            "{}/discover/2/get?g={}&s={}&p={}&f=all&w=0",
+            API_BASE, params.genre, params.sort, params.page
         );
+        if !params.tag.is_empty() {
+            url.push_str(&format!("&t={}", params.tag));
+        }
 
         let json: serde_json::Value = self
             .inner
@@ -167,6 +138,12 @@ impl BandcampClient {
                     .get("genre_text")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                let band_id = item.get("band_id").and_then(|v| v.as_u64());
+                let item_id = item.get("id").and_then(|v| v.as_u64());
+                let item_type = item
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
                 let album_url = item.get("url_hints").and_then(|hints| {
                     let subdomain = hints.get("subdomain")?.as_str()?;
@@ -189,9 +166,12 @@ impl BandcampClient {
                 Some(Album {
                     title,
                     artist,
-                    art_url: art_id.map(art_url),
+                    art_url: art_id.map(art_url_thumb),
                     url: album_url,
                     genre,
+                    band_id,
+                    item_id,
+                    item_type,
                 })
             })
             .collect())
@@ -238,7 +218,7 @@ impl BandcampClient {
                 all_items.push(CollectionItem {
                     title: item.item_title.unwrap_or_default(),
                     artist: item.band_name.unwrap_or_default(),
-                    art_url: item.item_art_id.map(art_url),
+                    art_url: item.item_art_id.map(art_url_thumb),
                     url: item.item_url.unwrap_or_default(),
                 });
             }
@@ -254,45 +234,74 @@ impl BandcampClient {
     }
 
     pub async fn get_album_details(&self, album_url: &str) -> Result<AlbumDetails> {
-        let html = self
+        let (band_id, tralbum_type, tralbum_id) = self.resolve_tralbum(album_url).await?;
+        self.get_album_details_by_id(band_id, &tralbum_type, tralbum_id, album_url)
+            .await
+    }
+
+    pub async fn get_album_details_by_id(
+        &self,
+        band_id: u64,
+        tralbum_type: &str,
+        tralbum_id: u64,
+        album_url: &str,
+    ) -> Result<AlbumDetails> {
+        let resp: serde_json::Value = self
             .inner
             .client
-            .get(album_url)
-            .headers(self.headers())
+            .post(format!("{}/mobile/24/tralbum_details", API_BASE))
+            .json(&serde_json::json!({
+                "band_id": band_id,
+                "tralbum_type": tralbum_type,
+                "tralbum_id": tralbum_id
+            }))
             .send()
             .await?
-            .text()
+            .json()
             .await?;
 
-        let document = Html::parse_document(&html);
-        let selector = Selector::parse("script[data-tralbum]").unwrap();
+        let album_title = resp
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let artist = resp
+            .get("tralbum_artist")
+            .or_else(|| resp.get("band").and_then(|b| b.get("name")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let album_art_id = resp.get("art_id").and_then(|v| v.as_u64());
 
-        let tralbum_json = document
-            .select(&selector)
-            .next()
-            .and_then(|el| el.value().attr("data-tralbum"))
-            .ok_or_else(|| anyhow!("No tralbum data found"))?;
-
-        let data: TralbumData = serde_json::from_str(tralbum_json)?;
-        let current = data
-            .current
-            .ok_or_else(|| anyhow!("No current album data"))?;
-
-        let artist = current.artist.or(data.artist).unwrap_or_default();
-        let album_title = current.title.unwrap_or_default();
-        let art_url_val = data.art_id.map(art_url);
-
-        let tracks = data
-            .trackinfo
+        let tracks = resp
+            .get("tracks")
+            .and_then(|v| v.as_array())
+            .cloned()
             .unwrap_or_default()
             .into_iter()
-            .map(|t| TrackInfo {
-                title: t.title.unwrap_or_default(),
-                artist: artist.clone(),
-                album: album_title.clone(),
-                art_url: art_url_val.clone(),
-                stream_url: t.file.and_then(|f| f.mp3_128),
-                duration: t.duration,
+            .map(|t| {
+                let track_title = t
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let stream_url = t
+                    .get("streaming_url")
+                    .and_then(|s| s.get("mp3-128"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let duration = t.get("duration").and_then(|v| v.as_f64());
+                let track_art_id = t.get("art_id").and_then(|v| v.as_u64());
+                let art = track_art_id.or(album_art_id).map(art_url_large);
+
+                TrackInfo {
+                    title: track_title,
+                    artist: artist.clone(),
+                    album: album_title.clone(),
+                    art_url: art,
+                    stream_url,
+                    duration,
+                }
             })
             .collect();
 
@@ -302,25 +311,73 @@ impl BandcampClient {
         })
     }
 
+    async fn resolve_tralbum(&self, url: &str) -> Result<(u64, String, u64)> {
+        let html = self
+            .inner
+            .client
+            .get(url)
+            .headers(self.headers())
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let marker = "data-tralbum=\"";
+        let start = html
+            .find(marker)
+            .ok_or_else(|| anyhow!("No tralbum data found on page"))?
+            + marker.len();
+        let end = html[start..]
+            .find('"')
+            .ok_or_else(|| anyhow!("Malformed tralbum data"))?
+            + start;
+        let escaped = &html[start..end];
+        let json_str = escaped
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">");
+
+        let data: serde_json::Value = serde_json::from_str(&json_str)?;
+
+        let current = data
+            .get("current")
+            .ok_or_else(|| anyhow!("No current field in tralbum"))?;
+        let band_id = current
+            .get("band_id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("No band_id in tralbum"))?;
+        let tralbum_id = current
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("No id in tralbum"))?;
+        let item_type = current
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("album");
+        let tralbum_type = match item_type {
+            "track" => "t",
+            _ => "a",
+        }
+        .to_string();
+
+        Ok((band_id, tralbum_type, tralbum_id))
+    }
+
     pub async fn search(&self, query: &str) -> Result<Vec<Album>> {
         let json: serde_json::Value = self
             .inner
             .client
-            .post("https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic")
-            .json(&serde_json::json!({
-                "search_text": query,
-                "search_filter": "a",
-                "full_page": true,
-                "fan_id": self.inner.fan.fan_id,
-            }))
+            .get(format!("{}/fuzzysearch/1/app_autocomplete", API_BASE))
+            .query(&[("q", query), ("param_with_locations", "true")])
             .send()
             .await?
             .json()
             .await?;
 
         let results = json
-            .get("auto")
-            .and_then(|v| v.get("results"))
+            .get("results")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
@@ -328,22 +385,90 @@ impl BandcampClient {
         Ok(results
             .into_iter()
             .filter_map(|item| {
-                let title = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let artist = item.get("band_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let art_id = item.get("art_id").and_then(|v| v.as_u64());
-                let url = item.get("item_url_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let genre = item.get("genre").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let result_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                match result_type {
+                    "a" | "t" => {
+                        let title = item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let artist = item
+                            .get("band_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let art_id = item.get("art_id").and_then(|v| v.as_u64());
+                        let url = item
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let genre = item
+                            .get("genre_name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let band_id = item.get("band_id").and_then(|v| v.as_u64());
+                        let item_id = item.get("id").and_then(|v| v.as_u64());
 
-                Some(Album {
-                    title,
-                    artist,
-                    art_url: art_id.map(art_url),
-                    url,
-                    genre,
-                })
+                        if url.is_empty() {
+                            return None;
+                        }
+
+                        Some(Album {
+                            title,
+                            artist,
+                            art_url: art_id.map(art_url_thumb),
+                            url,
+                            genre,
+                            band_id,
+                            item_id,
+                            item_type: Some(result_type.to_string()),
+                        })
+                    }
+                    "b" => {
+                        let name = item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let img_id = item.get("img_id").and_then(|v| v.as_u64());
+                        let url = item
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let location = item
+                            .get("location")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let genre = item
+                            .get("genre_name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        if url.is_empty() {
+                            return None;
+                        }
+
+                        let art_url =
+                            img_id.map(|id| format!("https://f4.bcbits.com/img/{:010}_23.jpg", id));
+
+                        Some(Album {
+                            title: name,
+                            artist: location.unwrap_or_default(),
+                            art_url,
+                            url,
+                            genre,
+                            band_id: None,
+                            item_id: None,
+                            item_type: Some("b".to_string()),
+                        })
+                    }
+                    _ => None,
+                }
             })
             .collect())
     }
-
 
 }
