@@ -8,10 +8,11 @@ A minimalistic Bandcamp music player client for Linux, built with Rust, GTK4/lib
 
 ## Features
 
-- **Search**: Find albums across all of Bandcamp
-- **Discover**: Browse new releases filtered by genre, sort, and format
+- **Search**: Find artists, albums, and tracks across Bandcamp
+- **Discover**: Browse releases filtered by genre, tag, and sort
 - **Library**: View your purchased collection and wishlist
 - **GStreamer Playback**: Stream music with media controls and seek bar
+- **Track List Controls**: Toggle the queue list and jump to any track
 - **MPRIS Integration**: Media keys and desktop player integration
 - **Session Persistence**: Stay logged in across restarts
 - **Open in Browser**: Quick-open album pages from the player bar
@@ -35,8 +36,7 @@ yay -S camper-git
 Dependencies: Rust 1.70+, GTK4, libadwaita, WebKitGTK 6.0, GStreamer (with plugins-base, plugins-good, plugins-bad)
 
 ```bash
-cargo build --release
-./target/release/camper
+nix develop --command cargo run
 ```
 
 ## Usage
