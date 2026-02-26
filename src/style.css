@@ -20,6 +20,20 @@
   color: white;
 }
 
+/* Tracklist in player */
+.tracklist-scroll {
+  border-top: 1px solid alpha(currentColor, 0.12);
+}
+
+.tracklist row {
+  padding: 0;
+  min-height: 0;
+}
+
+.tracklist row:hover {
+  background-color: alpha(currentColor, 0.04);
+}
+
 /* Compact toolbar controls in header bar */
 .compact-toolbar dropdown button {
   font-size: 0.85em;

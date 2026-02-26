@@ -28,12 +28,14 @@ pub struct Player {
     position: f64,
     duration: f64,
     volume: f64,
+    tracklist_visible: bool,
     art_pixbuf: Option<gtk4::gdk_pixbuf::Pixbuf>,
     mpris: Rc<RefCell<Option<MprisPlayer>>>,
     waveform_bars: Rc<RefCell<Vec<f64>>>,
     waveform_progress: Rc<Cell<f64>>,
     waveform_dragging: Rc<Cell<bool>>,
     waveform_area: gtk4::DrawingArea,
+    tracklist_box: gtk4::ListBox,
     _bus_watch: Option<gst::bus::BusWatchGuard>,
 }
 
@@ -50,6 +52,8 @@ pub enum PlayerMsg {
     EOS,
     SetArt(Vec<u8>),
     Wishlist,
+    ToggleTracklist,
+    JumpToTrack(usize),
 }
 
 #[derive(Debug)]
@@ -103,6 +107,30 @@ impl Component for Player {
 
             gtk4::Box {
             set_orientation: gtk4::Orientation::Vertical,
+
+            // Tracklist revealer
+            #[name = "tracklist_revealer"]
+            gtk4::Revealer {
+                set_transition_type: gtk4::RevealerTransitionType::SlideDown,
+                set_transition_duration: 150,
+                #[watch]
+                set_reveal_child: model.tracklist_visible && model.queue.len() > 1,
+
+                gtk4::ScrolledWindow {
+                    set_max_content_height: 200,
+                    set_propagate_natural_height: true,
+                    set_hscrollbar_policy: gtk4::PolicyType::Never,
+                    add_css_class: "tracklist-scroll",
+
+                    #[name = "tracklist_box_ref"]
+                    gtk4::ListBox {
+                        set_selection_mode: gtk4::SelectionMode::None,
+                        add_css_class: "tracklist",
+                    },
+                },
+            },
+
+            gtk4::Separator {},
 
             // Row 1: Art, info, controls
             gtk4::Box {
@@ -158,6 +186,17 @@ impl Component for Player {
                             }
                         },
                     },
+                },
+
+                // Tracklist toggle button
+                gtk4::Button {
+                    set_icon_name: "view-list-symbolic",
+                    add_css_class: "flat",
+                    set_valign: gtk4::Align::Center,
+                    set_tooltip_text: Some("Track list"),
+                    #[watch]
+                    set_visible: model.queue.len() > 1,
+                    connect_clicked => PlayerMsg::ToggleTracklist,
                 },
 
                 gtk4::Label {
@@ -324,7 +363,6 @@ impl Component for Player {
             }
         });
 
-        // Waveform state
         let waveform_bars: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
         let waveform_progress: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
         let waveform_dragging: Rc<Cell<bool>> = Rc::new(Cell::new(false));
@@ -334,7 +372,6 @@ impl Component for Player {
         waveform_area.set_hexpand(true);
         waveform_area.set_cursor_from_name(Some("pointer"));
 
-        // Draw function
         let bars_draw = waveform_bars.clone();
         let progress_draw = waveform_progress.clone();
         waveform_area.set_draw_func(move |_, cr, w, h| {
@@ -351,7 +388,6 @@ impl Component for Player {
             let gap = 1.0_f64.min(bar_pitch * 0.25);
             let bar_w = (bar_pitch - gap).max(1.0);
 
-            // Played bars
             cr.set_source_rgba(0.85, 0.28, 0.28, 1.0);
             for (i, &val) in bars.iter().enumerate() {
                 let x = i as f64 * bar_pitch;
@@ -364,7 +400,6 @@ impl Component for Player {
             }
             let _ = cr.fill();
 
-            // Unplayed bars
             cr.set_source_rgba(1.0, 1.0, 1.0, 0.12);
             for (i, &val) in bars.iter().enumerate() {
                 let x = i as f64 * bar_pitch;
@@ -378,7 +413,6 @@ impl Component for Player {
             let _ = cr.fill();
         });
 
-        // Drag-to-seek
         let drag = gtk4::GestureDrag::new();
         {
             let area = waveform_area.clone();
@@ -423,7 +457,10 @@ impl Component for Player {
         }
         waveform_area.add_controller(drag);
 
-        let model = Self {
+        // Placeholder — replaced after view_output!()
+        let tracklist_box_placeholder = gtk4::ListBox::new();
+
+        let mut model = Self {
             pipeline,
             current_track: None,
             queue: Vec::new(),
@@ -432,19 +469,21 @@ impl Component for Player {
             position: 0.0,
             duration: 0.0,
             volume: 1.0,
+            tracklist_visible: false,
             art_pixbuf: None,
             mpris,
             waveform_bars,
             waveform_progress,
             waveform_dragging,
             waveform_area: waveform_area.clone(),
+            tracklist_box: tracklist_box_placeholder,
             _bus_watch: Some(bus_watch),
         };
 
         let widgets = view_output!();
+        model.tracklist_box = widgets.tracklist_box_ref.clone();
         widgets.waveform_container.append(&waveform_area);
 
-        // Click on album art to open in browser
         let s = sender.clone();
         let art_click = gtk4::GestureClick::new();
         art_click.connect_released(move |_, _, _, _| {
@@ -466,6 +505,7 @@ impl Component for Player {
             PlayerMsg::PlayQueue(tracks, idx) => {
                 self.queue = tracks;
                 self.queue_index = idx;
+                self.rebuild_tracklist(&sender);
                 self.play_current(sender.clone());
             }
             PlayerMsg::Toggle => {
@@ -487,12 +527,14 @@ impl Component for Player {
             PlayerMsg::Next => {
                 if self.queue_index + 1 < self.queue.len() {
                     self.queue_index += 1;
+                    self.highlight_current_track();
                     self.play_current(sender.clone());
                 }
             }
             PlayerMsg::Prev => {
                 if self.queue_index > 0 {
                     self.queue_index -= 1;
+                    self.highlight_current_track();
                     self.play_current(sender.clone());
                 }
             }
@@ -533,6 +575,7 @@ impl Component for Player {
             PlayerMsg::EOS => {
                 if self.queue_index + 1 < self.queue.len() {
                     self.queue_index += 1;
+                    self.highlight_current_track();
                     self.play_current(sender.clone());
                 } else {
                     self.pipeline.set_state(gst::State::Null).ok();
@@ -551,6 +594,16 @@ impl Component for Player {
             PlayerMsg::Wishlist => {
                 if self.current_track.is_some() {
                     sender.output(PlayerOutput::Wishlist).ok();
+                }
+            }
+            PlayerMsg::ToggleTracklist => {
+                self.tracklist_visible = !self.tracklist_visible;
+            }
+            PlayerMsg::JumpToTrack(idx) => {
+                if idx < self.queue.len() {
+                    self.queue_index = idx;
+                    self.highlight_current_track();
+                    self.play_current(sender.clone());
                 }
             }
         }
@@ -587,7 +640,6 @@ impl Player {
         self.art_pixbuf = None;
         self.current_track = Some(track.clone());
 
-        // Generate waveform for this track
         let seed = format!("{}-{}", track.title, track.artist);
         *self.waveform_bars.borrow_mut() = generate_waveform(&seed);
         self.waveform_progress.set(0.0);
@@ -607,6 +659,86 @@ impl Player {
 
         self.sync_mpris();
         sender.output(PlayerOutput::NowPlaying).ok();
+    }
+
+    fn rebuild_tracklist(&self, sender: &ComponentSender<Self>) {
+        while let Some(child) = self.tracklist_box.first_child() {
+            self.tracklist_box.remove(&child);
+        }
+
+        for (i, track) in self.queue.iter().enumerate() {
+            let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+            row.set_margin_start(12);
+            row.set_margin_end(12);
+            row.set_margin_top(4);
+            row.set_margin_bottom(4);
+
+            let num_label = gtk4::Label::new(Some(&format!("{}", i + 1)));
+            num_label.add_css_class("dim-label");
+            num_label.add_css_class("caption");
+            num_label.add_css_class("numeric");
+            num_label.set_width_chars(3);
+            num_label.set_xalign(1.0);
+            row.append(&num_label);
+
+            let title_label = gtk4::Label::new(Some(&track.title));
+            title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            title_label.set_hexpand(true);
+            title_label.set_xalign(0.0);
+            title_label.add_css_class("caption");
+            if i == self.queue_index {
+                title_label.add_css_class("accent");
+            }
+            row.append(&title_label);
+
+            if let Some(dur) = track.duration {
+                let dur_label = gtk4::Label::new(Some(&format_time(dur)));
+                dur_label.add_css_class("dim-label");
+                dur_label.add_css_class("caption");
+                dur_label.add_css_class("numeric");
+                row.append(&dur_label);
+            }
+
+            let list_row = gtk4::ListBoxRow::new();
+            list_row.set_child(Some(&row));
+            list_row.set_cursor_from_name(Some("pointer"));
+
+            let s = sender.clone();
+            let click = gtk4::GestureClick::new();
+            click.connect_released(move |_, _, _, _| {
+                s.input(PlayerMsg::JumpToTrack(i));
+            });
+            list_row.add_controller(click);
+
+            self.tracklist_box.append(&list_row);
+        }
+    }
+
+    fn highlight_current_track(&self) {
+        let mut idx = 0;
+        let mut row = self.tracklist_box.first_child();
+        while let Some(widget) = row {
+            if let Some(list_row) = widget.downcast_ref::<gtk4::ListBoxRow>() {
+                if let Some(hbox) = list_row.child() {
+                    // The title label is the second child (after the number label)
+                    let mut child = hbox.first_child();
+                    let mut child_idx = 0;
+                    while let Some(c) = child {
+                        if child_idx == 1 {
+                            if idx == self.queue_index {
+                                c.add_css_class("accent");
+                            } else {
+                                c.remove_css_class("accent");
+                            }
+                        }
+                        child = c.next_sibling();
+                        child_idx += 1;
+                    }
+                }
+            }
+            row = widget.next_sibling();
+            idx += 1;
+        }
     }
 
     fn sync_mpris(&self) {
