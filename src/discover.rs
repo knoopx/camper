@@ -1,5 +1,5 @@
 use crate::album_grid::{AlbumData, AlbumGrid, AlbumGridMsg, AlbumGridOutput};
-use crate::bandcamp::{BandcampClient, DiscoverParams, GENRES, SORT_OPTIONS, subgenres_for};
+use crate::bandcamp::{BandcampClient, DiscoverParams, GENRES, SORT_OPTIONS};
 use gtk4::prelude::*;
 use relm4::prelude::*;
 
@@ -23,7 +23,7 @@ pub enum DiscoverMsg {
     Refresh,
     LoadMore,
     SetGenre(u32),
-    SetSubgenre(u32),
+    SetTag(String),
     SetSort(u32),
 
     Loaded(Result<Vec<AlbumData>, String>),
@@ -32,11 +32,10 @@ pub enum DiscoverMsg {
 
 #[derive(Debug)]
 pub enum DiscoverOutput {
-    Play(String),
+    Play(AlbumData),
     GenreChanged(u32),
-    SubgenreChanged(u32),
+    TagChanged(String),
     SortChanged(u32),
-
 }
 
 #[relm4::component(pub)]
@@ -93,20 +92,15 @@ impl Component for DiscoverPage {
             DiscoverMsg::SetGenre(i) => {
                 if let Some((k, _)) = GENRES.get(i as usize) {
                     self.params.genre = k.to_string();
-                    self.params.subgenre = 0;
+                    self.params.tag = String::new();
                     sender.output(DiscoverOutput::GenreChanged(i)).ok();
-                    sender.output(DiscoverOutput::SubgenreChanged(0)).ok();
+                    sender.output(DiscoverOutput::TagChanged(String::new())).ok();
                     sender.input(DiscoverMsg::Refresh);
                 }
             }
-            DiscoverMsg::SetSubgenre(i) => {
-                let subs = subgenres_for(&self.params.genre);
-                if i == 0 {
-                    self.params.subgenre = 0;
-                } else if let Some((id, _)) = subs.get((i - 1) as usize) {
-                    self.params.subgenre = *id;
-                }
-                sender.output(DiscoverOutput::SubgenreChanged(i)).ok();
+            DiscoverMsg::SetTag(tag) => {
+                self.params.tag = tag.clone();
+                sender.output(DiscoverOutput::TagChanged(tag)).ok();
                 sender.input(DiscoverMsg::Refresh);
             }
             DiscoverMsg::SetSort(i) => {
@@ -116,7 +110,6 @@ impl Component for DiscoverPage {
                     sender.input(DiscoverMsg::Refresh);
                 }
             }
-
             DiscoverMsg::Loaded(result) => {
                 self.loading = false;
                 match result {
@@ -129,7 +122,7 @@ impl Component for DiscoverPage {
             }
             DiscoverMsg::GridAction(action) => match action {
                 AlbumGridOutput::Clicked(data) => {
-                    sender.output(DiscoverOutput::Play(data.url)).ok();
+                    sender.output(DiscoverOutput::Play(data)).ok();
                 }
                 AlbumGridOutput::ScrolledToBottom => {
                     sender.input(DiscoverMsg::LoadMore);
@@ -149,25 +142,40 @@ impl DiscoverPage {
         self.loading = true;
         let params = self.params.clone();
         sender.oneshot_command(async move {
-            client.discover(&params).await
-                .map(|albums| albums.into_iter().map(|a| AlbumData {
-                    title: a.title,
-                    artist: a.artist,
-                    genre: a.genre,
-                    art_url: a.art_url,
-                    url: a.url,
-                }).collect())
+            client
+                .discover(&params)
+                .await
+                .map(|albums| {
+                    albums
+                        .into_iter()
+                        .map(|a| AlbumData {
+                            title: a.title,
+                            artist: a.artist,
+                            genre: a.genre,
+                            art_url: a.art_url,
+                            url: a.url,
+                            band_id: a.band_id,
+                            item_id: a.item_id,
+                            item_type: a.item_type,
+                        })
+                        .collect()
+                })
                 .map_err(|e| e.to_string())
         });
     }
 }
 
-pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
+pub fn build_toolbar(
+    sender: &relm4::Sender<DiscoverMsg>,
+    ui_state: &crate::storage::UiState,
+) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     toolbar.add_css_class("compact-toolbar");
 
     let genre_dd = gtk4::DropDown::new(
-        Some(gtk4::StringList::new(&GENRES.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
+        Some(gtk4::StringList::new(
+            &GENRES.iter().map(|(_, l)| *l).collect::<Vec<_>>(),
+        )),
         None::<gtk4::Expression>,
     );
     if let Some(i) = ui_state.discover_genre {
@@ -175,54 +183,46 @@ pub fn build_toolbar(sender: &relm4::Sender<DiscoverMsg>, ui_state: &crate::stor
     }
     toolbar.append(&genre_dd);
 
-    // Subgenre dropdown — populated based on selected genre
-    let subgenre_dd = gtk4::DropDown::new(
-        Some(gtk4::StringList::new(&["All"])),
-        None::<gtk4::Expression>,
-    );
-    toolbar.append(&subgenre_dd);
-
-    // Populate subgenre for initial genre
-    let initial_genre_idx = ui_state.discover_genre.unwrap_or(0) as usize;
-    if let Some((slug, _)) = GENRES.get(initial_genre_idx) {
-        populate_subgenre_dropdown(&subgenre_dd, slug);
-        if let Some(i) = ui_state.discover_subgenre {
-            subgenre_dd.set_selected(i);
-        }
+    let tag_entry = gtk4::SearchEntry::new();
+    tag_entry.set_placeholder_text(Some("Tag filter..."));
+    tag_entry.set_max_width_chars(16);
+    if let Some(ref t) = ui_state.discover_tag {
+        tag_entry.set_text(t);
     }
+    toolbar.append(&tag_entry);
 
-    // Genre change updates subgenre list
-    let sub_dd = subgenre_dd.clone();
+    let tag_entry_for_genre = tag_entry.clone();
     let s = sender.clone();
     genre_dd.connect_selected_notify(move |dd| {
-        let idx = dd.selected();
-        if let Some((slug, _)) = GENRES.get(idx as usize) {
-            populate_subgenre_dropdown(&sub_dd, slug);
-        }
-        s.emit(DiscoverMsg::SetGenre(idx));
+        tag_entry_for_genre.set_text("");
+        s.emit(DiscoverMsg::SetGenre(dd.selected()));
     });
 
     let s = sender.clone();
-    subgenre_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetSubgenre(dd.selected())); });
+    tag_entry.connect_activate(move |entry| {
+        let text = entry
+            .text()
+            .to_string()
+            .trim()
+            .to_lowercase()
+            .replace(' ', "-");
+        s.emit(DiscoverMsg::SetTag(text));
+    });
 
     let sort_dd = gtk4::DropDown::new(
-        Some(gtk4::StringList::new(&SORT_OPTIONS.iter().map(|(_, l)| *l).collect::<Vec<_>>())),
+        Some(gtk4::StringList::new(
+            &SORT_OPTIONS.iter().map(|(_, l)| *l).collect::<Vec<_>>(),
+        )),
         None::<gtk4::Expression>,
     );
     if let Some(i) = ui_state.discover_sort {
         sort_dd.set_selected(i);
     }
     let s = sender.clone();
-    sort_dd.connect_selected_notify(move |dd| { s.emit(DiscoverMsg::SetSort(dd.selected())); });
+    sort_dd.connect_selected_notify(move |dd| {
+        s.emit(DiscoverMsg::SetSort(dd.selected()));
+    });
     toolbar.append(&sort_dd);
 
     toolbar
-}
-
-fn populate_subgenre_dropdown(dd: &gtk4::DropDown, genre_slug: &str) {
-    let subs = subgenres_for(genre_slug);
-    let mut labels: Vec<&str> = vec!["All"];
-    labels.extend(subs.iter().map(|(_, l)| *l));
-    dd.set_model(Some(&gtk4::StringList::new(&labels)));
-    dd.set_selected(0);
 }

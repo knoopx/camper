@@ -12,6 +12,7 @@ fn find_child_by_name(widget: &impl IsA<gtk4::Widget>, name: &str) -> Option<gtk
     None
 }
 
+use crate::album_grid::AlbumData;
 use crate::bandcamp::{AlbumDetails, BandcampClient};
 use crate::discover::{DiscoverMsg, DiscoverOutput, DiscoverPage};
 use crate::library::{LibraryMsg, LibraryOutput, LibraryPage};
@@ -60,9 +61,9 @@ pub enum AppMsg {
     SearchAction(SearchOutput),
     LibraryAction(LibraryOutput),
     PlayerAction(PlayerOutput),
-    PlayAlbum(String),
+    PlayAlbum(AlbumData),
     AlbumLoaded(Result<AlbumDetails, String>),
-    AddToWishlist,
+    OpenInBrowser,
     TabChanged,
     SaveUiState,
     Logout,
@@ -131,7 +132,6 @@ impl Component for App {
     }
 
     fn init(_: Self::Init, root: Self::Root, sender: ComponentSender<Self>) -> ComponentParts<Self> {
-        // Load custom CSS
         let css = gtk4::CssProvider::new();
         css.load_from_string(include_str!("style.css"));
         gtk4::style_context_add_provider_for_display(
@@ -184,7 +184,6 @@ impl Component for App {
         );
         root.add_breakpoint(narrow_breakpoint);
 
-        // Global keyboard shortcuts
         let s = sender.clone();
         let content_stack = widgets.content_stack.clone();
         let key_ctrl = gtk4::EventControllerKey::new();
@@ -192,7 +191,6 @@ impl Component for App {
         key_ctrl.connect_key_pressed(move |_, key, _, modifiers| {
             let ctrl = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
 
-            // Ctrl+1/2/3 — switch tabs
             if ctrl {
                 let tab = match key {
                     gdk::Key::_1 => Some("search"),
@@ -206,22 +204,23 @@ impl Component for App {
                 }
             }
 
-            // Skip media shortcuts when focus is on a text input widget
             let root_widget = content_stack.root();
             let focused_on_text = root_widget
                 .as_ref()
                 .and_then(|r| r.focus())
-                .map(|w| w.is::<gtk4::SearchEntry>() || w.is::<gtk4::Entry>() || w.is::<gtk4::Text>())
+                .map(|w| {
+                    w.is::<gtk4::SearchEntry>()
+                        || w.is::<gtk4::Entry>()
+                        || w.is::<gtk4::Text>()
+                })
                 .unwrap_or(false);
 
             if !focused_on_text {
                 match key {
-                    // Space — play/pause
                     gdk::Key::space => {
                         s.input(AppMsg::PlayerToggle);
                         return gtk4::glib::Propagation::Stop;
                     }
-                    // Ctrl+Right / Ctrl+Left — next/prev track
                     gdk::Key::Right if ctrl => {
                         s.input(AppMsg::PlayerNext);
                         return gtk4::glib::Propagation::Stop;
@@ -230,7 +229,6 @@ impl Component for App {
                         s.input(AppMsg::PlayerPrev);
                         return gtk4::glib::Propagation::Stop;
                     }
-                    // Ctrl+Up / Ctrl+Down — volume
                     gdk::Key::Up if ctrl => {
                         s.input(AppMsg::PlayerVolumeUp);
                         return gtk4::glib::Propagation::Stop;
@@ -303,31 +301,28 @@ impl Component for App {
                     .launch(())
                     .forward(sender.input_sender(), AppMsg::PlayerAction);
 
-                // Restore saved volume
                 if let Some(vol) = self.ui_state.volume {
                     player.emit(PlayerMsg::SetVolume(vol));
                 }
 
-                // Restore saved search query
                 if let Some(ref q) = self.ui_state.search_query {
                     if !q.is_empty() {
                         search.emit(SearchMsg::QueryChanged(q.clone()));
                     }
                 }
 
-                // Restore saved discover filters
                 if let Some(genre) = self.ui_state.discover_genre {
                     discover.emit(DiscoverMsg::SetGenre(genre));
                 }
-                if let Some(subgenre) = self.ui_state.discover_subgenre {
-                    discover.emit(DiscoverMsg::SetSubgenre(subgenre));
+                if let Some(ref tag) = self.ui_state.discover_tag {
+                    if !tag.is_empty() {
+                        discover.emit(DiscoverMsg::SetTag(tag.clone()));
+                    }
                 }
                 if let Some(sort) = self.ui_state.discover_sort {
                     discover.emit(DiscoverMsg::SetSort(sort));
                 }
 
-
-                // Restore saved library sort/query
                 if let Some(ref s) = self.ui_state.library_sort {
                     let sort = match s.as_str() {
                         "name" => crate::library::Sort::Name,
@@ -341,10 +336,12 @@ impl Component for App {
                     }
                 }
 
-                // Build toolbars and pack into header bar
-                let search_toolbar = crate::search::build_toolbar(search.sender(), &self.ui_state);
-                let discover_toolbar = crate::discover::build_toolbar(discover.sender(), &self.ui_state);
-                let library_toolbar = crate::library::build_toolbar(library.sender(), &self.ui_state);
+                let search_toolbar =
+                    crate::search::build_toolbar(search.sender(), &self.ui_state);
+                let discover_toolbar =
+                    crate::discover::build_toolbar(discover.sender(), &self.ui_state);
+                let library_toolbar =
+                    crate::library::build_toolbar(library.sender(), &self.ui_state);
 
                 let toolbar_stack = gtk4::Stack::new();
                 toolbar_stack.set_hhomogeneous(true);
@@ -358,29 +355,42 @@ impl Component for App {
                 });
 
                 widgets.content_stack.add_titled_with_icon(
-                    search.widget(), Some("search"), "Search", "system-search-symbolic",
+                    search.widget(),
+                    Some("search"),
+                    "Search",
+                    "system-search-symbolic",
                 );
                 widgets.content_stack.add_titled_with_icon(
-                    discover.widget(), Some("discover"), "Discover", "web-browser-symbolic",
+                    discover.widget(),
+                    Some("discover"),
+                    "Discover",
+                    "web-browser-symbolic",
                 );
                 widgets.content_stack.add_titled_with_icon(
-                    library.widget(), Some("library"), "Library", "folder-music-symbolic",
+                    library.widget(),
+                    Some("library"),
+                    "Library",
+                    "folder-music-symbolic",
                 );
-
                 widgets.player_box.append(player.widget());
 
-                // Hide player extra controls (volume, open in browser) on narrow layout
-                if let Some(extra) = find_child_by_name(player.widget(), "player-extra-controls") {
-                    self.narrow_breakpoint.add_setter(&extra, "visible", Some(&false.to_value()));
+                if let Some(extra) =
+                    find_child_by_name(player.widget(), "player-extra-controls")
+                {
+                    self.narrow_breakpoint
+                        .add_setter(&extra, "visible", Some(&false.to_value()));
                 }
 
-                widgets.view_switcher.set_stack(Some(&widgets.content_stack));
+                widgets
+                    .view_switcher
+                    .set_stack(Some(&widgets.content_stack));
 
-                // Listen for tab changes
                 let s = sender.clone();
-                widgets.content_stack.connect_visible_child_name_notify(move |_| {
-                    s.input(AppMsg::TabChanged);
-                });
+                widgets
+                    .content_stack
+                    .connect_visible_child_name_notify(move |_| {
+                        s.input(AppMsg::TabChanged);
+                    });
 
                 self.discover = Some(discover);
                 self.search = Some(search);
@@ -389,8 +399,12 @@ impl Component for App {
                 self.client = Some(client);
                 self.mode = AppMode::Main;
 
-                // Restore saved tab or default to library
-                let tab = self.ui_state.active_tab.as_deref().unwrap_or("library");
+                let tab = match self.ui_state.active_tab.as_deref() {
+                    Some("search" | "discover" | "library") => {
+                        self.ui_state.active_tab.as_deref().unwrap_or("library")
+                    }
+                    _ => "library",
+                };
                 widgets.content_stack.set_visible_child_name(tab);
                 sender.input(AppMsg::TabChanged);
             }
@@ -417,36 +431,38 @@ impl Component for App {
                 sender.input(AppMsg::ShowToast(format!("Login failed: {}", e)));
             }
             AppMsg::DiscoverAction(action) => match action {
-                DiscoverOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
+                DiscoverOutput::Play(data) => sender.input(AppMsg::PlayAlbum(data)),
                 DiscoverOutput::GenreChanged(i) => {
                     self.ui_state.discover_genre = Some(i);
-                    self.ui_state.discover_subgenre = Some(0);
+                    self.ui_state.discover_tag = Some(String::new());
                     sender.input(AppMsg::SaveUiState);
                 }
-                DiscoverOutput::SubgenreChanged(i) => {
-                    self.ui_state.discover_subgenre = Some(i);
+                DiscoverOutput::TagChanged(tag) => {
+                    self.ui_state.discover_tag = Some(tag);
                     sender.input(AppMsg::SaveUiState);
                 }
                 DiscoverOutput::SortChanged(i) => {
                     self.ui_state.discover_sort = Some(i);
                     sender.input(AppMsg::SaveUiState);
                 }
-
             },
             AppMsg::SearchAction(action) => match action {
-                SearchOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
+                SearchOutput::Play(data) => sender.input(AppMsg::PlayAlbum(data)),
                 SearchOutput::QueryChanged(q) => {
                     self.ui_state.search_query = Some(q);
                     sender.input(AppMsg::SaveUiState);
                 }
             },
             AppMsg::LibraryAction(action) => match action {
-                LibraryOutput::Play(url) => sender.input(AppMsg::PlayAlbum(url)),
+                LibraryOutput::Play(data) => sender.input(AppMsg::PlayAlbum(data)),
                 LibraryOutput::SortChanged(s) => {
-                    self.ui_state.library_sort = Some(match s {
-                        crate::library::Sort::Date => "date",
-                        crate::library::Sort::Name => "name",
-                    }.to_string());
+                    self.ui_state.library_sort = Some(
+                        match s {
+                            crate::library::Sort::Date => "date",
+                            crate::library::Sort::Name => "name",
+                        }
+                        .to_string(),
+                    );
                     sender.input(AppMsg::SaveUiState);
                 }
                 LibraryOutput::QueryChanged(q) => {
@@ -457,57 +473,82 @@ impl Component for App {
             AppMsg::PlayerAction(output) => match output {
                 PlayerOutput::NowPlaying => {}
                 PlayerOutput::Wishlist => {
-                    sender.input(AppMsg::AddToWishlist);
+                    sender.input(AppMsg::OpenInBrowser);
                 }
                 PlayerOutput::VolumeChanged(v) => {
                     self.ui_state.volume = Some(v);
                     sender.input(AppMsg::SaveUiState);
                 }
             },
-            AppMsg::PlayAlbum(url) => {
-                if url.is_empty() {
+            AppMsg::PlayAlbum(data) => {
+                if data.url.is_empty() {
                     sender.input(AppMsg::ShowToast("No album URL".to_string()));
                     return;
                 }
                 if let Some(client) = self.client.clone() {
-                    sender.oneshot_command(async move {
-                        match client.get_album_details(&url).await {
-                            Ok(details) => AppCmd::AlbumLoaded(Ok(details)),
-                            Err(e) => AppCmd::AlbumLoaded(Err(e.to_string())),
-                        }
-                    });
+                    // Use direct tralbum loading when IDs are available
+                    if let (Some(band_id), Some(item_id), Some(ref item_type)) =
+                        (data.band_id, data.item_id, &data.item_type)
+                    {
+                        let url = data.url.clone();
+                        let itype = item_type.clone();
+                        sender.oneshot_command(async move {
+                            match client
+                                .get_album_details_by_id(band_id, &itype, item_id, &url)
+                                .await
+                            {
+                                Ok(details) => AppCmd::AlbumLoaded(Ok(details)),
+                                Err(e) => AppCmd::AlbumLoaded(Err(e.to_string())),
+                            }
+                        });
+                    } else {
+                        // Fallback: resolve via HTML scrape
+                        let url = data.url.clone();
+                        sender.oneshot_command(async move {
+                            match client.get_album_details(&url).await {
+                                Ok(details) => AppCmd::AlbumLoaded(Ok(details)),
+                                Err(e) => AppCmd::AlbumLoaded(Err(e.to_string())),
+                            }
+                        });
+                    }
                 }
             }
-            AppMsg::AlbumLoaded(result) => {
-                match result {
-                    Ok(details) => {
-                        let tracks: Vec<Track> = details.tracks.iter()
-                            .filter_map(|t| Some(Track {
+            AppMsg::AlbumLoaded(result) => match result {
+                Ok(details) => {
+                    let tracks: Vec<Track> = details
+                        .tracks
+                        .iter()
+                        .filter_map(|t| {
+                            Some(Track {
                                 title: t.title.clone(),
                                 artist: t.artist.clone(),
                                 album: t.album.clone(),
                                 art_url: t.art_url.clone(),
                                 stream_url: t.stream_url.clone()?,
                                 duration: t.duration,
-                            }))
-                            .collect();
+                            })
+                        })
+                        .collect();
 
-                        if tracks.is_empty() {
-                            sender.input(AppMsg::ShowToast("No playable tracks".to_string()));
-                        } else {
-                            self.current_album = Some(details);
-                            if let Some(player) = &self.player {
-                                player.emit(PlayerMsg::PlayQueue(tracks, 0));
-                            }
+                    if tracks.is_empty() {
+                        sender
+                            .input(AppMsg::ShowToast("No playable tracks".to_string()));
+                    } else {
+                        self.current_album = Some(details);
+                        if let Some(player) = &self.player {
+                            player.emit(PlayerMsg::PlayQueue(tracks, 0));
                         }
                     }
-                    Err(e) => sender.input(AppMsg::ShowToast(format!("Failed: {}", e))),
                 }
-            }
-            AppMsg::AddToWishlist => {
+                Err(e) => sender.input(AppMsg::ShowToast(format!("Failed: {}", e))),
+            },
+            AppMsg::OpenInBrowser => {
                 if let Some(album) = self.current_album.as_ref() {
                     if let Err(e) = open::that(&album.url) {
-                        sender.input(AppMsg::ShowToast(format!("Failed to open browser: {}", e)));
+                        sender.input(AppMsg::ShowToast(format!(
+                            "Failed to open browser: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -516,10 +557,18 @@ impl Component for App {
                 self.mode = AppMode::Login;
                 self.client = None;
 
-                if let Some(d) = self.discover.take() { widgets.content_stack.remove(d.widget()); }
-                if let Some(s) = self.search.take() { widgets.content_stack.remove(s.widget()); }
-                if let Some(l) = self.library.take() { widgets.content_stack.remove(l.widget()); }
-                if let Some(p) = self.player.take() { widgets.player_box.remove(p.widget()); }
+                if let Some(d) = self.discover.take() {
+                    widgets.content_stack.remove(d.widget());
+                }
+                if let Some(s) = self.search.take() {
+                    widgets.content_stack.remove(s.widget());
+                }
+                if let Some(l) = self.library.take() {
+                    widgets.content_stack.remove(l.widget());
+                }
+                if let Some(p) = self.player.take() {
+                    widgets.player_box.remove(p.widget());
+                }
 
                 if let Some(toolbars) = self.toolbars.take() {
                     widgets.header_bar.remove(&toolbars.stack);
@@ -557,15 +606,22 @@ impl Component for App {
             }
         }
 
-        widgets.main_stack.set_visible_child_name(match self.mode {
-            AppMode::Login => "login",
-            AppMode::Main => "main",
-        });
+        widgets
+            .main_stack
+            .set_visible_child_name(match self.mode {
+                AppMode::Login => "login",
+                AppMode::Main => "main",
+            });
 
         self.update_view(widgets, sender);
     }
 
-    fn update_cmd(&mut self, msg: Self::CommandOutput, sender: ComponentSender<Self>, _root: &Self::Root) {
+    fn update_cmd(
+        &mut self,
+        msg: Self::CommandOutput,
+        sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
         match msg {
             AppCmd::ClientReady(client) => sender.input(AppMsg::ClientReady(client)),
             AppCmd::ClientError(e) => sender.input(AppMsg::ClientError(e)),

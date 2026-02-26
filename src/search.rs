@@ -21,7 +21,7 @@ pub enum SearchMsg {
 
 #[derive(Debug)]
 pub enum SearchOutput {
-    Play(String),
+    Play(AlbumData),
     QueryChanged(String),
 }
 
@@ -40,7 +40,11 @@ impl Component for SearchPage {
         }
     }
 
-    fn init(_: Self::Init, root: Self::Root, sender: ComponentSender<Self>) -> ComponentParts<Self> {
+    fn init(
+        _: Self::Init,
+        root: Self::Root,
+        sender: ComponentSender<Self>,
+    ) -> ComponentParts<Self> {
         let grid = AlbumGrid::builder()
             .launch(())
             .forward(sender.input_sender(), SearchMsg::GridAction);
@@ -81,21 +85,28 @@ impl Component for SearchPage {
             }
             SearchMsg::GridAction(action) => match action {
                 AlbumGridOutput::Clicked(data) => {
-                    sender.output(SearchOutput::Play(data.url)).ok();
+                    sender.output(SearchOutput::Play(data)).ok();
                 }
                 AlbumGridOutput::ScrolledToBottom => {}
             },
         }
     }
 
-    fn update_cmd(&mut self, msg: Self::CommandOutput, sender: ComponentSender<Self>, _root: &Self::Root) {
+    fn update_cmd(
+        &mut self,
+        msg: Self::CommandOutput,
+        sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
         sender.input(SearchMsg::Loaded(msg));
     }
 }
 
 impl SearchPage {
     fn fetch(&mut self, sender: ComponentSender<Self>) {
-        let Some(client) = self.client.clone() else { return };
+        let Some(client) = self.client.clone() else {
+            return;
+        };
         self.loading = true;
         let query = self.query.clone();
         sender.oneshot_command(async move {
@@ -111,6 +122,9 @@ impl SearchPage {
                             genre: a.genre,
                             art_url: a.art_url,
                             url: a.url,
+                            band_id: a.band_id,
+                            item_id: a.item_id,
+                            item_type: a.item_type,
                         })
                         .collect()
                 })
@@ -119,12 +133,15 @@ impl SearchPage {
     }
 }
 
-pub fn build_toolbar(sender: &relm4::Sender<SearchMsg>, ui_state: &crate::storage::UiState) -> gtk4::Box {
+pub fn build_toolbar(
+    sender: &relm4::Sender<SearchMsg>,
+    ui_state: &crate::storage::UiState,
+) -> gtk4::Box {
     let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     toolbar.add_css_class("compact-toolbar");
 
     let entry = gtk4::SearchEntry::new();
-    entry.set_placeholder_text(Some("Search albums..."));
+    entry.set_placeholder_text(Some("Search artists, albums, tracks..."));
     entry.set_hexpand(true);
     if let Some(ref q) = ui_state.search_query {
         entry.set_text(q);

@@ -31,7 +31,7 @@ pub enum LibraryMsg {
 
 #[derive(Debug)]
 pub enum LibraryOutput {
-    Play(String),
+    Play(crate::album_grid::AlbumData),
     SortChanged(Sort),
     QueryChanged(String),
 }
@@ -103,7 +103,7 @@ impl Component for LibraryPage {
             }
             LibraryMsg::GridAction(action) => match action {
                 AlbumGridOutput::Clicked(data) => {
-                    sender.output(LibraryOutput::Play(data.url)).ok();
+                    sender.output(LibraryOutput::Play(data)).ok();
                 }
                 AlbumGridOutput::ScrolledToBottom => {}
             },
@@ -148,6 +148,9 @@ impl LibraryPage {
                 genre: None,
                 art_url: item.art_url.clone(),
                 url: item.url.clone(),
+                band_id: None,
+                item_id: None,
+                item_type: None,
             })
             .collect();
 

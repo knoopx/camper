@@ -11,6 +11,9 @@ pub struct AlbumData {
     pub genre: Option<String>,
     pub art_url: Option<String>,
     pub url: String,
+    pub band_id: Option<u64>,
+    pub item_id: Option<u64>,
+    pub item_type: Option<String>,
 }
 
 pub struct AlbumGrid {
