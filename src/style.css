@@ -10,6 +10,10 @@
   font-weight: 600;
 }
 
+.album-genre {
+  font-size: 0.75em;
+}
+
 /* Play overlay on album art hover */
 .play-overlay {
   background-color: rgba(0, 0, 0, 0.45);
