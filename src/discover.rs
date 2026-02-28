@@ -36,6 +36,7 @@ pub enum DiscoverOutput {
     GenreChanged(u32),
     TagChanged(String),
     SortChanged(u32),
+    Error(String),
 }
 
 #[relm4::component(pub)]
@@ -117,7 +118,7 @@ impl Component for DiscoverPage {
                         FetchMode::Fresh => self.grid.emit(AlbumGridMsg::Replace(albums)),
                         FetchMode::LoadMore => self.grid.emit(AlbumGridMsg::Append(albums)),
                     },
-                    Err(e) => eprintln!("Discover fetch failed: {e}"),
+                    Err(e) => { sender.output(DiscoverOutput::Error(format!("Discover failed: {e}"))).ok(); }
                 }
             }
             DiscoverMsg::GridAction(action) => match action {
@@ -145,21 +146,7 @@ impl DiscoverPage {
             client
                 .discover(&params)
                 .await
-                .map(|albums| {
-                    albums
-                        .into_iter()
-                        .map(|a| AlbumData {
-                            title: a.title,
-                            artist: a.artist,
-                            genre: a.genre,
-                            art_url: a.art_url,
-                            url: a.url,
-                            band_id: a.band_id,
-                            item_id: a.item_id,
-                            item_type: a.item_type,
-                        })
-                        .collect()
-                })
+                .map(|albums| albums.into_iter().map(AlbumData::from).collect())
                 .map_err(|e| e.to_string())
         });
     }

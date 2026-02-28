@@ -1,3 +1,4 @@
+use crate::library::Sort;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -39,7 +40,7 @@ pub struct UiState {
     pub discover_genre: Option<u32>,
     pub discover_tag: Option<String>,
     pub discover_sort: Option<u32>,
-    pub library_sort: Option<String>,
+    pub library_sort: Option<Sort>,
     pub library_query: Option<String>,
     pub volume: Option<f64>,
 }

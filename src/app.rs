@@ -1,17 +1,3 @@
-fn find_child_by_name(widget: &impl IsA<gtk4::Widget>, name: &str) -> Option<gtk4::Widget> {
-    let mut child = widget.first_child();
-    while let Some(c) = child {
-        if c.widget_name() == name {
-            return Some(c);
-        }
-        if let Some(found) = find_child_by_name(&c, name) {
-            return Some(found);
-        }
-        child = c.next_sibling();
-    }
-    None
-}
-
 use crate::album_grid::AlbumData;
 use crate::bandcamp::{AlbumDetails, BandcampClient};
 use crate::discover::{DiscoverMsg, DiscoverOutput, DiscoverPage};
@@ -25,6 +11,20 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use relm4::prelude::*;
+
+fn find_child_by_name(widget: &impl IsA<gtk4::Widget>, name: &str) -> Option<gtk4::Widget> {
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if c.widget_name() == name {
+            return Some(c);
+        }
+        if let Some(found) = find_child_by_name(&c, name) {
+            return Some(found);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
 
 pub struct App {
     mode: AppMode,
@@ -323,11 +323,7 @@ impl Component for App {
                     discover.emit(DiscoverMsg::SetSort(sort));
                 }
 
-                if let Some(ref s) = self.ui_state.library_sort {
-                    let sort = match s.as_str() {
-                        "name" => crate::library::Sort::Name,
-                        _ => crate::library::Sort::Date,
-                    };
+                if let Some(sort) = self.ui_state.library_sort {
                     library.emit(LibraryMsg::SetSort(sort));
                 }
                 if let Some(ref q) = self.ui_state.library_query {
@@ -432,6 +428,7 @@ impl Component for App {
             }
             AppMsg::DiscoverAction(action) => match action {
                 DiscoverOutput::Play(data) => sender.input(AppMsg::PlayAlbum(data)),
+                DiscoverOutput::Error(e) => sender.input(AppMsg::ShowToast(e)),
                 DiscoverOutput::GenreChanged(i) => {
                     self.ui_state.discover_genre = Some(i);
                     self.ui_state.discover_tag = Some(String::new());
@@ -448,6 +445,7 @@ impl Component for App {
             },
             AppMsg::SearchAction(action) => match action {
                 SearchOutput::Play(data) => sender.input(AppMsg::PlayAlbum(data)),
+                SearchOutput::Error(e) => sender.input(AppMsg::ShowToast(e)),
                 SearchOutput::QueryChanged(q) => {
                     self.ui_state.search_query = Some(q);
                     sender.input(AppMsg::SaveUiState);
@@ -455,14 +453,9 @@ impl Component for App {
             },
             AppMsg::LibraryAction(action) => match action {
                 LibraryOutput::Play(data) => sender.input(AppMsg::PlayAlbum(data)),
-                LibraryOutput::SortChanged(s) => {
-                    self.ui_state.library_sort = Some(
-                        match s {
-                            crate::library::Sort::Date => "date",
-                            crate::library::Sort::Name => "name",
-                        }
-                        .to_string(),
-                    );
+                LibraryOutput::Error(e) => sender.input(AppMsg::ShowToast(e)),
+                LibraryOutput::SortChanged(sort) => {
+                    self.ui_state.library_sort = Some(sort);
                     sender.input(AppMsg::SaveUiState);
                 }
                 LibraryOutput::QueryChanged(q) => {
@@ -518,16 +511,9 @@ impl Component for App {
                     let tracks: Vec<Track> = details
                         .tracks
                         .iter()
-                        .filter_map(|t| {
-                            Some(Track {
-                                title: t.title.clone(),
-                                artist: t.artist.clone(),
-                                album: t.album.clone(),
-                                art_url: t.art_url.clone(),
-                                stream_url: t.stream_url.clone()?,
-                                duration: t.duration,
-                            })
-                        })
+                        .filter(|t| t.stream_url.is_some())
+                        .cloned()
+                        .map(Track::from)
                         .collect();
 
                     if tracks.is_empty() {

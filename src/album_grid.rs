@@ -16,6 +16,36 @@ pub struct AlbumData {
     pub item_type: Option<String>,
 }
 
+impl From<crate::bandcamp::Album> for AlbumData {
+    fn from(a: crate::bandcamp::Album) -> Self {
+        Self {
+            title: a.title,
+            artist: a.artist,
+            genre: a.genre,
+            art_url: a.art_url,
+            url: a.url,
+            band_id: a.band_id,
+            item_id: a.item_id,
+            item_type: a.item_type,
+        }
+    }
+}
+
+impl From<crate::bandcamp::CollectionItem> for AlbumData {
+    fn from(item: crate::bandcamp::CollectionItem) -> Self {
+        Self {
+            title: item.title,
+            artist: item.artist,
+            genre: None,
+            art_url: item.art_url,
+            url: item.url,
+            band_id: None,
+            item_id: None,
+            item_type: None,
+        }
+    }
+}
+
 pub struct AlbumGrid {
     wrap_box: adw::WrapBox,
     stack: gtk4::Stack,
@@ -195,6 +225,7 @@ fn build_card(data: &AlbumData, sender: &ComponentSender<AlbumGrid>) -> adw::Cla
         genre_label.set_halign(gtk4::Align::Start);
         genre_label.add_css_class("dim-label");
         genre_label.add_css_class("caption");
+        genre_label.add_css_class("album-genre");
         card.append(&genre_label);
     }
 

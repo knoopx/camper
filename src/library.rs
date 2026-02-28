@@ -2,8 +2,10 @@ use crate::album_grid::{AlbumData, AlbumGrid, AlbumGridMsg, AlbumGridOutput};
 use crate::bandcamp::{BandcampClient, CollectionItem};
 use gtk4::prelude::*;
 use relm4::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Sort {
     #[default]
     Date,
@@ -34,6 +36,7 @@ pub enum LibraryOutput {
     Play(crate::album_grid::AlbumData),
     SortChanged(Sort),
     QueryChanged(String),
+    Error(String),
 }
 
 #[relm4::component(pub)]
@@ -98,7 +101,7 @@ impl Component for LibraryPage {
                         self.all_items.extend(wishlist);
                         self.apply_sort();
                     }
-                    Err(e) => eprintln!("Library fetch failed: {e}"),
+                    Err(e) => { sender.output(LibraryOutput::Error(format!("Library failed: {e}"))).ok(); }
                 }
             }
             LibraryMsg::GridAction(action) => match action {
@@ -141,17 +144,9 @@ impl LibraryPage {
             Sort::Name => items.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
         }
 
-        let albums: Vec<AlbumData> = items.iter()
-            .map(|item| AlbumData {
-                title: item.title.clone(),
-                artist: item.artist.clone(),
-                genre: None,
-                art_url: item.art_url.clone(),
-                url: item.url.clone(),
-                band_id: None,
-                item_id: None,
-                item_type: None,
-            })
+        let albums: Vec<AlbumData> = items
+            .into_iter()
+            .map(|item| AlbumData::from(item.clone()))
             .collect();
 
         self.grid.emit(AlbumGridMsg::Replace(albums));
@@ -177,12 +172,12 @@ pub fn build_toolbar(sender: &relm4::Sender<LibraryMsg>, ui_state: &crate::stora
     let sort_group = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     sort_group.add_css_class("linked");
 
-    let saved_sort = ui_state.library_sort.as_deref().unwrap_or("date");
+    let saved_sort = ui_state.library_sort.unwrap_or_default();
 
     let date_btn = gtk4::ToggleButton::new();
     date_btn.set_icon_name("document-open-recent-symbolic");
     date_btn.set_tooltip_text(Some("Sort by date"));
-    date_btn.set_active(saved_sort != "name");
+    date_btn.set_active(saved_sort != Sort::Name);
     let s = sender.clone();
     date_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetSort(Sort::Date)); });
     sort_group.append(&date_btn);
@@ -191,7 +186,7 @@ pub fn build_toolbar(sender: &relm4::Sender<LibraryMsg>, ui_state: &crate::stora
     name_btn.set_icon_name("view-sort-ascending-rtl-symbolic");
     name_btn.set_tooltip_text(Some("Sort by name"));
     name_btn.set_group(Some(&date_btn));
-    name_btn.set_active(saved_sort == "name");
+    name_btn.set_active(saved_sort == Sort::Name);
     let s = sender.clone();
     name_btn.connect_clicked(move |_| { s.emit(LibraryMsg::SetSort(Sort::Name)); });
     sort_group.append(&name_btn);

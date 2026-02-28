@@ -23,6 +23,7 @@ pub enum SearchMsg {
 pub enum SearchOutput {
     Play(AlbumData),
     QueryChanged(String),
+    Error(String),
 }
 
 #[relm4::component(pub)]
@@ -80,7 +81,7 @@ impl Component for SearchPage {
                 self.loading = false;
                 match result {
                     Ok(albums) => self.grid.emit(AlbumGridMsg::Replace(albums)),
-                    Err(e) => eprintln!("Search failed: {e}"),
+                    Err(e) => { sender.output(SearchOutput::Error(format!("Search failed: {e}"))).ok(); }
                 }
             }
             SearchMsg::GridAction(action) => match action {
@@ -113,21 +114,7 @@ impl SearchPage {
             client
                 .search(&query)
                 .await
-                .map(|albums| {
-                    albums
-                        .into_iter()
-                        .map(|a| AlbumData {
-                            title: a.title,
-                            artist: a.artist,
-                            genre: a.genre,
-                            art_url: a.art_url,
-                            url: a.url,
-                            band_id: a.band_id,
-                            item_id: a.item_id,
-                            item_type: a.item_type,
-                        })
-                        .collect()
-                })
+                .map(|albums| albums.into_iter().map(AlbumData::from).collect())
                 .map_err(|e| e.to_string())
         });
     }
