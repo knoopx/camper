@@ -19,6 +19,19 @@ pub struct Track {
     pub duration: Option<f64>,
 }
 
+impl From<crate::bandcamp::TrackInfo> for Track {
+    fn from(t: crate::bandcamp::TrackInfo) -> Self {
+        Self {
+            title: t.title,
+            artist: t.artist,
+            album: t.album,
+            art_url: t.art_url,
+            stream_url: t.stream_url.unwrap_or_default(),
+            duration: t.duration,
+        }
+    }
+}
+
 pub struct Player {
     pipeline: gst::Element,
     current_track: Option<Track>,
@@ -648,12 +661,10 @@ impl Player {
         if let Some(url) = &track.art_url {
             let url = url.clone();
             sender.oneshot_command(async move {
-                reqwest::get(&url)
-                    .await
-                    .ok()
-                    .and_then(|r| futures::executor::block_on(r.bytes()).ok())
-                    .map(|b| b.to_vec())
-                    .unwrap_or_default()
+                match reqwest::get(&url).await {
+                    Ok(r) => r.bytes().await.map(|b| b.to_vec()).unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                }
             });
         }
 
@@ -784,6 +795,12 @@ impl Player {
             let Some(m) = binding.as_ref() else { return };
             m.set_position(Time::from_micros(pos_micros));
         });
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.pipeline.set_state(gst::State::Null).ok();
     }
 }
 
