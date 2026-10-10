@@ -48,10 +48,7 @@ impl SimpleComponent for LoginPage {
 
             #[wrap(Some)]
             #[local_ref]
-            set_content = webview_ref -> WebView {
-                set_vexpand: true,
-                set_hexpand: true,
-            },
+            set_content = webview_box_ref -> gtk4::Box {},
         }
     }
 
@@ -81,7 +78,23 @@ impl SimpleComponent for LoginPage {
         });
 
         let model = LoginPage { webview: webview.clone() };
-        let webview_ref = &model.webview;
+
+        // WebKitGTK 6.0's WebKitWebView `measure` vfunc reports minimumSize = 0
+        // and naturalSize = contentsSize (0x0 until the page lays out). Placed
+        // directly as the content of the adw::ToolbarView (an AdwBin), the view
+        // therefore collapses to a narrow centered sliver; hexpand/vexpand alone
+        // do not fix it. Wrap it in an expanding box with a non-zero minimum
+        // size so the allocation fills the window.
+        webview.set_hexpand(true);
+        webview.set_vexpand(true);
+        webview.set_size_request(1, 1);
+
+        let webview_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        webview_box.set_hexpand(true);
+        webview_box.set_vexpand(true);
+        webview_box.append(&webview);
+
+        let webview_box_ref = &webview_box;
         let widgets = view_output!();
 
         ComponentParts { model, widgets }
