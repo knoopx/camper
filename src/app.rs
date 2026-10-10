@@ -34,6 +34,7 @@ pub struct App {
     library: Option<Controller<LibraryPage>>,
     player: Option<Controller<Player>>,
     client: Option<BandcampClient>,
+    client_pending: bool,
     current_album: Option<AlbumDetails>,
     toast_overlay: adw::ToastOverlay,
     toolbars: Option<Toolbars>,
@@ -162,6 +163,7 @@ impl Component for App {
             library: None,
             player: None,
             client: None,
+            client_pending: false,
             current_album: None,
             toast_overlay: toast_overlay.clone(),
             toolbars: None,
@@ -261,9 +263,12 @@ impl Component for App {
     ) {
         match msg {
             AppMsg::LoginSuccess(cookies) => {
-                if self.client.is_some() || self.mode == AppMode::Main {
+                // The login webview and the stored-cookies auto-login can both
+                // emit LoginSuccess for the same session; only start one client.
+                if self.client.is_some() || self.client_pending || self.mode == AppMode::Main {
                     return;
                 }
+                self.client_pending = true;
                 let cookies_clone = cookies.clone();
                 sender.oneshot_command(async move {
                     match BandcampClient::new(cookies).await {
@@ -279,6 +284,12 @@ impl Component for App {
                 });
             }
             AppMsg::ClientReady(client) => {
+                // Idempotent: a duplicate ClientReady must not rebuild the pages
+                // (that would drop the old controllers, whose outliving glib
+                // sources then panic against the shutdown runtime).
+                if self.client.is_some() {
+                    return;
+                }
                 let username = client.fan().username.clone();
                 sender.input(AppMsg::ShowToast(format!("Welcome, {}!", username)));
 
@@ -424,6 +435,7 @@ impl Component for App {
                 let _ = storage::save_ui_state(&self.ui_state);
             }
             AppMsg::ClientError(e) => {
+                self.client_pending = false;
                 sender.input(AppMsg::ShowToast(format!("Login failed: {}", e)));
             }
             AppMsg::DiscoverAction(action) => match action {

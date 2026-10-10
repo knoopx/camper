@@ -43,7 +43,7 @@ pub struct Player {
     volume: f64,
     tracklist_visible: bool,
     art_pixbuf: Option<gtk4::gdk_pixbuf::Pixbuf>,
-    mpris: Rc<RefCell<Option<MprisPlayer>>>,
+    mpris: Rc<RefCell<Option<Rc<MprisPlayer>>>>,
     waveform_bars: Rc<RefCell<Vec<f64>>>,
     waveform_progress: Rc<Cell<f64>>,
     waveform_dragging: Rc<Cell<bool>>,
@@ -62,7 +62,7 @@ pub enum PlayerMsg {
     Seek(f64),
     SetVolume(f64),
     Tick,
-    EOS,
+    Eos,
     SetArt(Vec<u8>),
     Wishlist,
     ToggleTracklist,
@@ -330,10 +330,12 @@ impl Component for Player {
         let bus_watch = bus
             .add_watch_local(move |_, msg| {
                 match msg.view() {
-                    gst::MessageView::Eos(_) => s.input(PlayerMsg::EOS),
+                    gst::MessageView::Eos(_) => {
+                        s.input_sender().send(PlayerMsg::Eos).ok();
+                    }
                     gst::MessageView::Error(err) => {
                         eprintln!("GStreamer error: {:?}", err.error());
-                        s.input(PlayerMsg::EOS);
+                        s.input_sender().send(PlayerMsg::Eos).ok();
                     }
                     _ => {}
                 }
@@ -343,11 +345,15 @@ impl Component for Player {
 
         let s = sender.clone();
         gtk4::glib::timeout_add_local(Duration::from_millis(250), move || {
-            s.input(PlayerMsg::Tick);
+            // The timeout is never cancelled, so it outlives the component
+            // (e.g. after Logout drops the controller). `sender.input()` would
+            // panic in the glib trampoline once the runtime is shutdown;
+            // `Sender::send` fails silently instead.
+            s.input_sender().send(PlayerMsg::Tick).ok();
             gtk4::glib::ControlFlow::Continue
         });
 
-        let mpris: Rc<RefCell<Option<MprisPlayer>>> = Rc::new(RefCell::new(None));
+        let mpris: Rc<RefCell<Option<Rc<MprisPlayer>>>> = Rc::new(RefCell::new(None));
         let mpris_clone = mpris.clone();
         let st = sender.clone();
         let sn = sender.clone();
@@ -366,12 +372,12 @@ impl Component for Player {
                 .build()
                 .await
             {
-                m.connect_play_pause(move |_| st.input(PlayerMsg::Toggle));
-                m.connect_next(move |_| sn.input(PlayerMsg::Next));
-                m.connect_previous(move |_| sp.input(PlayerMsg::Prev));
-                m.connect_stop(move |_| ss.input(PlayerMsg::Stop));
+                m.connect_play_pause(move |_| { st.input_sender().send(PlayerMsg::Toggle).ok(); });
+                m.connect_next(move |_| { sn.input_sender().send(PlayerMsg::Next).ok(); });
+                m.connect_previous(move |_| { sp.input_sender().send(PlayerMsg::Prev).ok(); });
+                m.connect_stop(move |_| { ss.input_sender().send(PlayerMsg::Stop).ok(); });
                 let run_task = m.run();
-                *mpris_clone.borrow_mut() = Some(m);
+                *mpris_clone.borrow_mut() = Some(Rc::new(m));
                 run_task.await;
             }
         });
@@ -585,7 +591,7 @@ impl Component for Player {
                     self.sync_mpris_position();
                 }
             }
-            PlayerMsg::EOS => {
+            PlayerMsg::Eos => {
                 if self.queue_index + 1 < self.queue.len() {
                     self.queue_index += 1;
                     self.highlight_current_track();
@@ -778,11 +784,15 @@ impl Player {
         });
 
         gtk4::glib::spawn_future_local(async move {
-            let binding = mpris.borrow();
-            let Some(m) = binding.as_ref() else { return };
-            m.set_playback_status(status).await.ok();
-            if let Some(meta) = meta {
-                m.set_metadata(meta).await.ok();
+            let m = {
+                let binding = mpris.borrow();
+                binding.as_ref().cloned()
+            };
+            if let Some(m) = m {
+                m.set_playback_status(status).await.ok();
+                if let Some(meta) = meta {
+                    m.set_metadata(meta).await.ok();
+                }
             }
         });
     }
@@ -791,9 +801,13 @@ impl Player {
         let mpris = self.mpris.clone();
         let pos_micros = (self.position * 1_000_000.0) as i64;
         gtk4::glib::spawn_future_local(async move {
-            let binding = mpris.borrow();
-            let Some(m) = binding.as_ref() else { return };
-            m.set_position(Time::from_micros(pos_micros));
+            let m = {
+                let binding = mpris.borrow();
+                binding.as_ref().cloned()
+            };
+            if let Some(m) = m {
+                m.set_position(Time::from_micros(pos_micros));
+            }
         });
     }
 }

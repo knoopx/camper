@@ -61,7 +61,7 @@ struct UrlHints {
 }
 
 impl DiscoverItem {
-    fn to_album(self) -> Option<Album> {
+    fn into_album(self) -> Option<Album> {
         let hints = self.url_hints?;
         let subdomain = hints.subdomain?;
         let slug = hints.slug?;
@@ -108,7 +108,7 @@ struct SearchResult {
 }
 
 impl SearchResult {
-    fn to_album(self) -> Option<Album> {
+    fn into_album(self) -> Option<Album> {
         let url = self.item_url_path.filter(|u| !u.is_empty())?;
         let genre = if self.tag_names.is_empty() {
             None
@@ -248,7 +248,7 @@ impl BandcampClient {
             .json()
             .await?;
 
-        Ok(resp.items.into_iter().filter_map(DiscoverItem::to_album).collect())
+        Ok(resp.items.into_iter().filter_map(DiscoverItem::into_album).collect())
     }
 
     pub async fn get_collection(&self) -> Result<Vec<CollectionItem>> {
@@ -422,6 +422,6 @@ impl BandcampClient {
             .json()
             .await?;
 
-        Ok(resp.auto.results.into_iter().filter_map(SearchResult::to_album).collect())
+        Ok(resp.auto.results.into_iter().filter_map(SearchResult::into_album).collect())
     }
 }
